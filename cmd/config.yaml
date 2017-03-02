@@ -1,0 +1,14 @@
+xml_mirror: /mirror
+mysql: "root:test@tcp(mysql:3306)/cache"
+port: ":6666"
+redis_address: "pub-redis-19741.eu-central-1-1.1.ec2.redislabs.com:19741"
+routine_count: 2
+mongo: "mongodb://mongo:27017"
+mongo_db: "admin"
+mongo_err_collection: "file_process_errors"
+
+log_hook:
+    log_host: "mongodb://mongo:27017"
+    log_system: queue_reader
+    log_dbname: admin
+    log_collection: app_logs
