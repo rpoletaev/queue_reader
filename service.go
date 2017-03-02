@@ -113,8 +113,8 @@ func (svc *service) storeFileProcessError(erType int, path string, err error) er
 // GetServiceURL принимает версию данных и формирует url для сервиса
 func (svc service) GetServiceURL(version string) string {
 	vSuffix := version
-	if version == "0.98" {
-		vSuffix = "1.0"
+	if version == "1.0" {
+		vSuffix = "0.9.2"
 	}
 
 	return fmt.Sprintf("http://%s%s:%s/load/", svc.ServicePreffix, vSuffix, svc.ServicePort)
