@@ -8,6 +8,7 @@ mongo_db: "admin"
 mongo_err_collection: "file_process_errors"
 service_preffix: "mgo_service_"
 service_port: "3131"
+loging_url: true
 
 log_hook:
     log_host: "mongodb://mongo:27017"

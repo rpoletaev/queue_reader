@@ -117,7 +117,11 @@ func (svc service) GetServiceURL(version string) string {
 		vSuffix = "0.9.2"
 	}
 
-	return fmt.Sprintf("http://%s%s:%s/load/", svc.ServicePreffix, vSuffix, svc.ServicePort)
+	url := fmt.Sprintf("http://%s%s:%s/load/", svc.ServicePreffix, vSuffix, svc.ServicePort)
+	if svc.NeedLogingURL {
+		svc.log().Info(url)
+	}
+	return url
 }
 
 func (svc *service) Stop() {

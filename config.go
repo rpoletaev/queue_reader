@@ -26,6 +26,7 @@ type Config struct {
 	RoutineCount    int                 `yaml:"routine_count"`
 	ServicePreffix  string              `yaml:"service_preffix"`
 	ServicePort     string              `yaml:"service_port"`
+	NeedLogingURL   bool                `yaml:"loging_url"`
 }
 
 // MongoLogHookConfig описывает структуру для записи логов в MongoDB
