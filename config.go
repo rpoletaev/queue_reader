@@ -19,7 +19,7 @@ type Config struct {
 	MySQL           string              `yaml:"mysql"`
 	XMLMirror       string              `yaml:"xml_mirror"`
 	Port            string              `yaml:"port"`
-	Mongo           string              `yaml:"mongo_db"`
+	Mongo           string              `yaml:"mongo"`
 	MongoDB         string              `yaml:"mongo_db"`
 	ErrorCollection string              `yaml:"mongo_err_collection"`
 	RedisAddress    string              `yaml:"redis_address"`
