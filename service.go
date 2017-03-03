@@ -165,3 +165,10 @@ func (svc *service) mongoExec(colectionName string, execFunc func(*mgo.Collectio
 	collection := db.C(colectionName)
 	return execFunc(collection)
 }
+
+func (svc *service) ClearQueue() error {
+	conn := svc.redisPool.Get()
+	defer conn.Close()
+	_, err := conn.Do("DEL", "FileQueue")
+	return err
+}
