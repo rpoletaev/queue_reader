@@ -150,9 +150,9 @@ func (svc *service) Stop() {
 	}
 	close(svc.done)
 
-	time.Sleep(5 * time.Second)
-	svc.redisPool.Close()
-	svc.mongo.Close()
+	// time.Sleep(5 * time.Second)
+	// svc.redisPool.Close()
+	// svc.mongo.Close()
 }
 
 func newRedisPool(addr string) *redis.Pool {
