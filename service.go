@@ -2,13 +2,14 @@ package queue_reader
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
+	"time"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/garyburd/redigo/redis"
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
-	"io/ioutil"
-	"os"
-	"time"
 )
 
 type service struct {
@@ -52,47 +53,66 @@ func (svc *service) Run() {
 				case <-svc.done:
 					return
 				default:
-					str, err := svc.fileFromQueue()
-					if err != nil {
-						svc.log().Warning("Нет файлов в очереди")
-						svc.log().Errorf("Routine %d: %v\n", routineNum, err)
-						time.Sleep(1 * time.Minute)
-						continue
-					}
-
-					svc.log().Infof("Routine %d: Файл из очереди: %s\n", routineNum, str)
-					xmlBts, err := ioutil.ReadFile(str)
-					if err != nil {
-						svc.storeFileProcessError(ErrorReadFile, str, err)
-						svc.Errorf("Routine %d: не удалось прочесть файл: %v\n", routineNum, err)
-						continue
-					}
-
-					ei, err := getExportInfo(string(xmlBts))
-					if err != nil {
-						svc.storeFileProcessError(ErrorExportInfo, str, err)
-						svc.log().Errorf("Routine %d: Не удалось прочесть версию и коллекцию из файла %s: %v\n", routineNum, str, err)
-						continue
-					}
-
-					cli := GetClient()
-					url := svc.GetServiceURL(ei.Version)
-					err = cli.SendData(url, xmlBts)
-					if err != nil {
-						svc.storeFileProcessError(ErrorSend, str, err)
-						svc.log().Errorf("Routine %d: Ошибка при отправке данных на сервис %s: %v", routineNum, url, err)
-					}
-
-					svc.log().Info("Пытаемся удалить обработанный и сохраненный файл: ", str)
-					if err := os.Remove(str); err != nil {
-						svc.storeFileProcessError(ErrorRemove, str, err)
-						svc.log().Errorf("Routine %d: Не удалось удалить файл: %v", routineNum, err)
-					} else {
-						svc.log().Infoln("Файл удалён")
-					}
+					svc.processFile(routineNum, svc.fileFromQueue)
 				}
 			}
 		}(i)
+	}
+}
+
+func (svc *service) ProcessErrors() {
+	for i := 0; i < svc.RoutineCount; i++ {
+		go func(routineNum int) {
+			for {
+				select {
+				case <-svc.done:
+					return
+				default:
+					svc.processFile(routineNum, svc.fileFromErrors)
+				}
+			}
+		}(i)
+	}
+}
+
+func (svc *service) processFile(routineNum int, getFileFunc func() (string, error)) {
+	str, err := getFileFunc()
+	if err != nil {
+		svc.log().Warning("Нет файлов в очереди")
+		//svc.log().Errorf("Routine %d: %v\n", routineNum, err)
+		time.Sleep(1 * time.Minute)
+		return
+	}
+
+	svc.log().Infof("Routine %d: Файл из очереди: %s\n", routineNum, str)
+	xmlBts, err := ioutil.ReadFile(str)
+	if err != nil {
+		svc.storeFileProcessError(ErrorReadFile, str, err)
+		svc.Errorf("Routine %d: не удалось прочесть файл: %v\n", routineNum, err)
+		return
+	}
+
+	ei, err := getExportInfo(string(xmlBts))
+	if err != nil {
+		svc.storeFileProcessError(ErrorExportInfo, str, err)
+		svc.log().Errorf("Routine %d: Не удалось прочесть версию и коллекцию из файла %s: %v\n", routineNum, str, err)
+		return
+	}
+
+	cli := GetClient()
+	url := svc.GetServiceURL(ei.Version)
+	err = cli.SendData(url, xmlBts)
+	if err != nil {
+		svc.storeFileProcessError(ErrorSend, str, err)
+		svc.log().Errorf("Routine %d: Ошибка при отправке данных на сервис %s: %v", routineNum, url, err)
+	}
+
+	svc.log().Info("Пытаемся удалить обработанный и сохраненный файл: ", str)
+	if err := os.Remove(str); err != nil {
+		svc.storeFileProcessError(ErrorRemove, str, err)
+		svc.log().Errorf("Routine %d: Не удалось удалить файл: %v", routineNum, err)
+	} else {
+		svc.log().Infoln("Файл удалён")
 	}
 }
 
@@ -149,6 +169,23 @@ func (svc *service) fileFromQueue() (string, error) {
 	conn := svc.redisPool.Get()
 	defer conn.Close()
 	return redis.String(conn.Do("RPOP", "FileQueue"))
+}
+
+func (svc *service) fileFromErrors() (string, error) {
+	pe := &ProcessError{}
+	mErr := svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
+		return col.Find(nil).One(pe)
+	})
+
+	if mErr != nil {
+		return "", mErr
+	}
+
+	svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
+		return col.RemoveId(pe.ID)
+	})
+
+	return pe.FilePath, nil
 }
 
 func (svc *service) setupMongo() {

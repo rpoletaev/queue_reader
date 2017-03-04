@@ -2,8 +2,9 @@ package queue_reader
 
 import (
 	"fmt"
-	_ "gopkg.in/yaml.v2"
 	"regexp"
+
+	_ "gopkg.in/yaml.v2"
 )
 
 const (
@@ -49,7 +50,7 @@ type ExportInfo struct {
 }
 
 func getExportInfo(xmlContent string) (*ExportInfo, error) {
-	r, err := regexp.Compile("<(.+:)*([a-zA-Z]+) schemeVersion=\"(.+?)\">")
+	r, err := regexp.Compile(`<(.+:)*([a-zA-Z]*\d*[a-zA-Z]*) schemeVersion=\"(.+?)\">`)
 	if err != nil {
 		return nil, err
 	}

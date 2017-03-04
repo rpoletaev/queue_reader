@@ -1,11 +1,12 @@
 package main
 
 import (
-	qr "github.com/rpoletaev/queue_reader"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"net/http"
+
+	qr "github.com/rpoletaev/queue_reader"
+	"gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -50,5 +51,9 @@ func main() {
 		w.Write([]byte("Очередь очищена"))
 	})
 
+	http.HandleFunc("/process_errors", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("Запущена обработка ошибок"))
+		svc.ProcessErrors()
+	})
 	http.ListenAndServe(svc.Port, nil)
 }
