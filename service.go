@@ -213,3 +213,9 @@ func (svc *service) ClearQueue() error {
 	_, err := conn.Do("DEL", "FileQueue")
 	return err
 }
+
+func (svc *service) TestCall() {
+	svc.processFile(1, func() (string, error) {
+		return "/mirror/fcs_regions/Adygeja_RespBeginMessage_01173000344_58923.xml", nil
+	})
+}

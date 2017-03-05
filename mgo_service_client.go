@@ -2,6 +2,7 @@ package queue_reader
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -22,7 +23,7 @@ func (cli *client) SendData(url string, data []byte) error {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(data))
 	defer req.Body.Close()
 	req.Header.Set("Content-Type", "application/xml")
-
+	fmt.Printf("REQUEST %+v", req)
 	_, err = cli.client.Do(req)
 	return err
 	// io.Copy(os.Stdout, resp.Body)

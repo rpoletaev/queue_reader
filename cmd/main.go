@@ -55,5 +55,10 @@ func main() {
 		w.Write([]byte("Запущена обработка ошибок"))
 		svc.ProcessErrors()
 	})
+
+	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("test"))
+		svc.TestCall()
+	})
 	http.ListenAndServe(svc.Port, nil)
 }
