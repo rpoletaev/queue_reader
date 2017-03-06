@@ -7,11 +7,12 @@ import (
 	"os"
 	"time"
 
+	"net/http"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/garyburd/redigo/redis"
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
-	"net/http"
 )
 
 type service struct {
@@ -36,7 +37,6 @@ func GetService(cnf *Config) (*service, error) {
 
 	svc.redisPool = newRedisPool(cnf.RedisAddress)
 	svc.setupMongo()
-	svc.done = make(chan bool, svc.RoutineCount)
 	return svc, nil
 }
 
@@ -48,6 +48,7 @@ func (svc *service) log() *log.Entry {
 }
 
 func (svc *service) Run() {
+	svc.done = make(chan bool, svc.RoutineCount)
 	for i := 0; i < svc.RoutineCount; i++ {
 		go func(routineNum int) {
 			for {
@@ -63,6 +64,7 @@ func (svc *service) Run() {
 }
 
 func (svc *service) ProcessErrors() {
+	svc.done = make(chan bool, svc.RoutineCount)
 	for i := 0; i < svc.RoutineCount; i++ {
 		go func(routineNum int) {
 			for {
@@ -152,7 +154,7 @@ func (svc service) GetServiceURL(version string) string {
 		vSuffix = "0.9.2"
 	}
 
-	url := fmt.Sprintf("http://%s%s:%s/load/", svc.ServicePreffix, vSuffix, svc.ServicePort)
+	url := fmt.Sprintf("http://%s%s:%s/load", svc.ServicePreffix, vSuffix, svc.ServicePort)
 	if svc.NeedLogingURL {
 		svc.log().Info(url)
 	}
