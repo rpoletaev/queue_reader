@@ -21,9 +21,13 @@ func GetClient() *client {
 // SendData отправляет массив байтов на сервис
 func (cli *client) SendData(url string, data []byte) error {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
 	defer req.Body.Close()
-	req.Header.Set("Content-Type", "application/xml")
-	fmt.Printf("REQUEST %+v", req)
+
+	// req.Header.Set("Content-Type", "application/xml")
+	fmt.Printf("REQUEST_URL: %+v", url)
 	_, err = cli.client.Do(req)
 	return err
 	// io.Copy(os.Stdout, resp.Body)

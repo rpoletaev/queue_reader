@@ -1,6 +1,7 @@
 package queue_reader
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/garyburd/redigo/redis"
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
+	"net/http"
 )
 
 type service struct {
@@ -99,12 +101,25 @@ func (svc *service) processFile(routineNum int, getFileFunc func() (string, erro
 		return
 	}
 
-	cli := GetClient()
+	// cli := GetClient()
 	url := svc.GetServiceURL(ei.Version)
-	err = cli.SendData(url, xmlBts)
+	//err = cli.SendData(url, xmlBts)
+	cli := http.Client{}
+	// req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(xmlBts))
+	// if err != nil {
+	// 	svc.log().Error(err)
+	// 	return
+	// }
+
+	resp, err := cli.Post(url, "application/octet-stream", bytes.NewBuffer(xmlBts))
 	if err != nil {
 		svc.storeFileProcessError(ErrorSend, str, err)
-		svc.log().Errorf("Routine %d: Ошибка при отправке данных на сервис %s: %v", routineNum, url, err)
+		bodyBts := []byte{}
+		buf := bytes.NewBuffer(bodyBts)
+		buf.ReadFrom(resp.Body)
+		defer resp.Body.Close()
+		svc.log().Errorf("Routine %d: Ошибка при отправке данных на сервис %s: %v\nResponse: %+v ", routineNum, url, err, buf.String())
+		return
 	}
 
 	svc.log().Info("Пытаемся удалить обработанный и сохраненный файл: ", str)
@@ -216,6 +231,6 @@ func (svc *service) ClearQueue() error {
 
 func (svc *service) TestCall() {
 	svc.processFile(1, func() (string, error) {
-		return "/mirror/fcs_regions/Adygeja_RespBeginMessage_01173000344_58923.xml", nil
+		return "/mirror/fcs_regions/Adygeja_Resp/contracts/contract_0176100000714000002_14361970.xml", nil
 	})
 }
