@@ -1,13 +1,10 @@
 package queue_reader
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"time"
-
-	"net/http"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/garyburd/redigo/redis"
@@ -18,11 +15,15 @@ import (
 type service struct {
 	*log.Logger
 	*Config
-	redisPool *redis.Pool
-	mongo     *mgo.Session
-	done      chan bool
+	redisPool            *redis.Pool
+	mongo                *mgo.Session
+	errorsProcessRunning bool
+	queueProcessRunning  bool
+	errorsDone           chan bool //канал для остановки процесса обработки ошибок
+	queueDone            chan bool //канал для остановки процесса обработки файлов из очереди
 }
 
+// GetService Возвращает настроенный из конфига сервис
 func GetService(cnf *Config) (*service, error) {
 	logHook, err := mgorus.NewHooker(cnf.LogHook.Host, cnf.LogHook.DBName, cnf.LogHook.System)
 	if err != nil {
@@ -47,13 +48,37 @@ func (svc *service) log() *log.Entry {
 	})
 }
 
+// Посылает сигнал об остановке всем запущенным процессам обработки
+func (svc *service) Stop() {
+	for i := 0; i < svc.RoutineCount; i++ {
+		if svc.errorsProcessRunning {
+			svc.errorsDone <- true
+		}
+		if svc.queueProcessRunning {
+			svc.queueDone <- true
+		}
+	}
+	close(svc.errorsDone)
+	close(svc.queueDone)
+}
+
+// запустить обработку файлов из очереди загрузки
 func (svc *service) Run() {
-	svc.done = make(chan bool, svc.RoutineCount)
+	if svc.queueProcessRunning {
+		return
+	}
+
+	svc.queueDone = make(chan bool, svc.RoutineCount)
+	svc.queueProcessRunning = true
+	defer func() {
+		svc.queueProcessRunning = false
+	}()
+
 	for i := 0; i < svc.RoutineCount; i++ {
 		go func(routineNum int) {
 			for {
 				select {
-				case <-svc.done:
+				case <-svc.queueDone:
 					return
 				default:
 					svc.processFile(routineNum, svc.fileFromQueue)
@@ -63,13 +88,23 @@ func (svc *service) Run() {
 	}
 }
 
+// запустить обработку файлов из очереди ошибок
 func (svc *service) ProcessErrors() {
-	svc.done = make(chan bool, svc.RoutineCount)
+	if svc.errorsProcessRunning {
+		return
+	}
+
+	svc.errorsDone = make(chan bool, svc.RoutineCount)
+	svc.errorsProcessRunning = true
+	defer func() {
+		svc.errorsProcessRunning = false
+	}()
+
 	for i := 0; i < svc.RoutineCount; i++ {
 		go func(routineNum int) {
 			for {
 				select {
-				case <-svc.done:
+				case <-svc.errorsDone:
 					return
 				default:
 					svc.processFile(routineNum, svc.fileFromErrors)
@@ -79,11 +114,17 @@ func (svc *service) ProcessErrors() {
 	}
 }
 
+// Обрабатываем файл:
+// Получаем из источника посредством getFileFunc(), например из очереди сервиса загрузки файлов
+// или из очереди ошибок для попытки поправить и сохранить в бд
+// на каждом этапе обработки при возникновении ошибки пишем ошибку в специальную очередь в MongoDB
+// указывая  тип ошибки, соответствующий этапу обработки. После чего выходим из функции.
+// Если ни на одном из этапов обработки ошибок не возникло, то пытаемся удалить файл с диска.
+// В случае неудачи так же запишем сообщение в очередь ошибок с типом ErrorRemove
 func (svc *service) processFile(routineNum int, getFileFunc func() (string, error)) {
 	str, err := getFileFunc()
 	if err != nil {
 		svc.log().Warning("Нет файлов в очереди")
-		//svc.log().Errorf("Routine %d: %v\n", routineNum, err)
 		time.Sleep(1 * time.Minute)
 		return
 	}
@@ -103,24 +144,12 @@ func (svc *service) processFile(routineNum int, getFileFunc func() (string, erro
 		return
 	}
 
-	// cli := GetClient()
+	cli := GetClient()
 	url := svc.GetServiceURL(ei.Version)
-	//err = cli.SendData(url, xmlBts)
-	cli := http.Client{}
-	// req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(xmlBts))
-	// if err != nil {
-	// 	svc.log().Error(err)
-	// 	return
-	// }
-
-	resp, err := cli.Post(url, "application/octet-stream", bytes.NewBuffer(xmlBts))
+	err = cli.SendData(url, xmlBts)
 	if err != nil {
 		svc.storeFileProcessError(ErrorSend, str, err)
-		bodyBts := []byte{}
-		buf := bytes.NewBuffer(bodyBts)
-		buf.ReadFrom(resp.Body)
-		defer resp.Body.Close()
-		svc.log().Errorf("Routine %d: Ошибка при отправке данных на сервис %s: %v\nResponse: %+v ", routineNum, url, err, buf.String())
+		svc.log().Errorf("Routine %d: Ошибка при отправке данных на сервис %s: %v\n", routineNum, url, err)
 		return
 	}
 
@@ -133,6 +162,32 @@ func (svc *service) processFile(routineNum int, getFileFunc func() (string, erro
 	}
 }
 
+// Получаем путь к файлу из очереди сервиса загрузки
+func (svc *service) fileFromQueue() (string, error) {
+	conn := svc.redisPool.Get()
+	defer conn.Close()
+	return redis.String(conn.Do("RPOP", "FileQueue"))
+}
+
+// Получаем путь к файлу из очереди ошибок
+func (svc *service) fileFromErrors() (string, error) {
+	pe := &ProcessError{}
+	mErr := svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
+		return col.Find(nil).One(pe)
+	})
+
+	if mErr != nil {
+		return "", mErr
+	}
+
+	svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
+		return col.RemoveId(pe.ID)
+	})
+
+	return pe.FilePath, nil
+}
+
+// Сохраним информацию об ошибке обработки файла в очередь для последующей обработки
 func (svc *service) storeFileProcessError(erType int, path string, err error) error {
 	pe := ProcessError{
 		ErrorType: erType,
@@ -161,17 +216,6 @@ func (svc service) GetServiceURL(version string) string {
 	return url
 }
 
-func (svc *service) Stop() {
-	for i := 0; i < svc.RoutineCount; i++ {
-		svc.done <- true
-	}
-	close(svc.done)
-
-	// time.Sleep(5 * time.Second)
-	// svc.redisPool.Close()
-	// svc.mongo.Close()
-}
-
 func newRedisPool(addr string) *redis.Pool {
 	return &redis.Pool{
 		MaxIdle:     3,
@@ -180,29 +224,6 @@ func newRedisPool(addr string) *redis.Pool {
 			return redis.Dial("tcp", addr, redis.DialDatabase(0), redis.DialPassword("nigersex"))
 		},
 	}
-}
-
-func (svc *service) fileFromQueue() (string, error) {
-	conn := svc.redisPool.Get()
-	defer conn.Close()
-	return redis.String(conn.Do("RPOP", "FileQueue"))
-}
-
-func (svc *service) fileFromErrors() (string, error) {
-	pe := &ProcessError{}
-	mErr := svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
-		return col.Find(nil).One(pe)
-	})
-
-	if mErr != nil {
-		return "", mErr
-	}
-
-	svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
-		return col.RemoveId(pe.ID)
-	})
-
-	return pe.FilePath, nil
 }
 
 func (svc *service) setupMongo() {
@@ -231,8 +252,15 @@ func (svc *service) ClearQueue() error {
 	return err
 }
 
-func (svc *service) TestCall() {
-	svc.processFile(1, func() (string, error) {
-		return "/mirror/fcs_regions/Adygeja_Resp/contracts/contract_0176100000714000002_14361970.xml", nil
+func (svc *service) ClearErrorQueue() (removed int, err error) {
+	svc.mongoExec(svc.ErrorCollection, func(c *mgo.Collection) error {
+		i, err := c.RemoveAll(nil)
+		if err != nil {
+			return err
+		}
+
+		removed = i.Removed
+		return nil
 	})
+	return removed, err
 }
