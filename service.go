@@ -58,8 +58,14 @@ func (svc *service) Stop() {
 			svc.queueDone <- true
 		}
 	}
-	close(svc.errorsDone)
-	close(svc.queueDone)
+
+	if svc.errorsProcessRunning {
+		close(svc.errorsDone)
+	}
+	if svc.queueProcessRunning {
+		close(svc.queueDone)
+	}
+
 }
 
 // запустить обработку файлов из очереди загрузки
