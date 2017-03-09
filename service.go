@@ -114,7 +114,7 @@ func (svc *service) ProcessErrors() {
 				case <-svc.errorsDone:
 					return
 				default:
-					svc.processFile(routineNum, svc.fileListFromErrors)
+					svc.processFilesList(routineNum, svc.fileListFromErrors)
 				}
 			}
 		}(i)
