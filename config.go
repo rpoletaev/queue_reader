@@ -1,14 +1,5 @@
 package queue_reader
 
-import _ "gopkg.in/yaml.v2"
-
-const (
-	ErrorReadFile   = iota //Ошибка чтения файла из зеркала
-	ErrorExportInfo        //Ошибка получения информации о версии и заголовке коллекции
-	ErrorSend              //Ошибка возникшая, при отправке данных сервису сохранения
-	ErrorRemove            //Ошибка при удалении обработанного файла
-)
-
 // Config описывает структуру конфигурации сервиса
 type Config struct {
 	LogHook         *MongoLogHookConfig `yaml:"log_hook"`
