@@ -11,7 +11,8 @@ service_port: "3131"
 loging_url: true
 
 log_hook:
-    log_host: "mongodb://mongo:27017"
+    log_host: production
     log_system: queue_reader
+    log_db_host: "mongodb://mongo:27017"
     log_dbname: admin
     log_collection: app_logs
