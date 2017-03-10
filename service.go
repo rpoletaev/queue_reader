@@ -13,7 +13,6 @@ import (
 	expinf "github.com/rpoletaev/exportinfo"
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type service struct {
@@ -207,25 +206,6 @@ func (svc *service) fileListFromErrors() (string, error) {
 		fileList[i] = p.FilePath
 	}
 	return strings.Join(fileList, ","), nil
-}
-
-// Сохраним информацию об ошибке обработки файла в очередь для последующей обработки
-func (svc *service) storeFileProcessError(erType int, path string, err error) error {
-	pe := ProcessError{
-		ID:        bson.NewObjectId(),
-		ErrorType: erType,
-		FilePath:  path,
-		CreatedAt: time.Now().Unix(),
-		Error:     err.Error(),
-	}
-
-	mErr := svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
-		return col.Insert(pe)
-	})
-	if mErr != nil {
-		svc.log().Errorln("Ошибка при сохранении ошибки: ", mErr)
-	}
-	return mErr
 }
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
