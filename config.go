@@ -34,6 +34,7 @@ type Config struct {
 type MongoLogHookConfig struct {
 	Host       string `yaml:"log_host"`
 	System     string `yaml:"log_system"`
+	DBHost     string `yaml:"log_db_host"`
 	DBName     string `yaml:"log_dbname"`
 	Collection string `yaml:"log_collection"`
 }

@@ -26,8 +26,10 @@ type service struct {
 
 // GetService Возвращает настроенный из конфига сервис
 func GetService(cnf *Config) (*service, error) {
-	logHook, err := mgorus.NewHooker(cnf.LogHook.Host, cnf.LogHook.DBName, cnf.LogHook.System)
+	logHook, err := mgorus.NewHooker(cnf.LogHook.DBHost, cnf.LogHook.DBName, cnf.LogHook.System)
+	time.Sleep(10 * time.Second)
 	if err != nil {
+		log.Error(err)
 		return nil, err
 	}
 
@@ -235,7 +237,7 @@ func newRedisPool(addr string) *redis.Pool {
 		MaxIdle:     3,
 		IdleTimeout: 240 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", addr, redis.DialDatabase(0), redis.DialPassword("nigersex"))
+			return redis.Dial("tcp", addr, redis.DialDatabase(0))
 		},
 	}
 }
