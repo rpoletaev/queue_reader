@@ -3,7 +3,6 @@ package queue_reader
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -13,9 +12,9 @@ type client struct {
 }
 
 // GetClient возвращает http.Client с установленным таймаутом в 10 секунд
-func GetClient() *client {
+func GetClient(timeOut time.Duration) *client {
 	return &client{
-		client: &http.Client{Timeout: time.Duration(10 * time.Second)},
+		client: &http.Client{Timeout: timeOut},
 	}
 }
 
@@ -28,8 +27,10 @@ func (cli *client) SendData(url string, data []byte) error {
 	defer req.Body.Close()
 
 	// req.Header.Set("Content-Type", "application/xml")
-	fmt.Printf("REQUEST_URL: %+v", url)
 	resp, err := cli.client.Do(req)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBuf := bytes.NewBuffer(make([]byte, 0, resp.ContentLength))
