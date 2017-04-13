@@ -222,55 +222,52 @@ func (svc service) GetServiceURL(version string) string {
 	}
 	return url
 }
-<<<<<<< HEAD
 
-func newRedisPool(addr string) *redis.Pool {
-	return &redis.Pool{
-		MaxIdle:     3,
-		IdleTimeout: 240 * time.Second,
-		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", addr, redis.DialDatabase(0))
-		},
-	}
-}
+// func newRedisPool(addr string) *redis.Pool {
+// 	return &redis.Pool{
+// 		MaxIdle:     3,
+// 		IdleTimeout: 240 * time.Second,
+// 		Dial: func() (redis.Conn, error) {
+// 			return redis.Dial("tcp", addr, redis.DialDatabase(0))
+// 		},
+// 	}
+// }
 
-func (svc *service) setupMongo() {
-	mongo, err := mgo.Dial(svc.Mongo)
-	if err != nil {
-		panic(err)
-	}
+// func (svc *service) setupMongo() {
+// 	mongo, err := mgo.Dial(svc.Mongo)
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	svc.mongo = mongo
-	svc.mongo.SetMode(mgo.Monotonic, true)
-}
+// 	svc.mongo = mongo
+// 	svc.mongo.SetMode(mgo.Monotonic, true)
+// }
 
-func (svc *service) mongoExec(colectionName string, execFunc func(*mgo.Collection) error) error {
-	session := svc.mongo.Clone()
-	defer session.Close()
+// func (svc *service) mongoExec(colectionName string, execFunc func(*mgo.Collection) error) error {
+// 	session := svc.mongo.Clone()
+// 	defer session.Close()
 
-	db := session.DB(svc.MongoDB)
-	collection := db.C(colectionName)
-	return execFunc(collection)
-}
+// 	db := session.DB(svc.MongoDB)
+// 	collection := db.C(colectionName)
+// 	return execFunc(collection)
+// }
 
-func (svc *service) ClearQueue() error {
-	conn := svc.redisPool.Get()
-	defer conn.Close()
-	_, err := conn.Do("DEL", "FileQueue")
-	return err
-}
+// func (svc *service) ClearQueue() error {
+// 	conn := svc.redisPool.Get()
+// 	defer conn.Close()
+// 	_, err := conn.Do("DEL", "FileQueue")
+// 	return err
+// }
 
-func (svc *service) ClearErrorQueue() (removed int, err error) {
-	svc.mongoExec(svc.ErrorCollection, func(c *mgo.Collection) error {
-		i, err := c.RemoveAll(nil)
-		if err != nil {
-			return err
-		}
+// func (svc *service) ClearErrorQueue() (removed int, err error) {
+// 	svc.mongoExec(svc.ErrorCollection, func(c *mgo.Collection) error {
+// 		i, err := c.RemoveAll(nil)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		removed = i.Removed
-		return nil
-	})
-	return removed, err
-}
-=======
->>>>>>> 586af2f9478bdfaf0be280cff48632991c3aac24
+// 		removed = i.Removed
+// 		return nil
+// 	})
+// 	return removed, err
+// }
