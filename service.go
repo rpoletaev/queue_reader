@@ -90,6 +90,7 @@ func (svc *service) Run() {
 			for {
 				select {
 				case <-svc.queueDone:
+					svc.log().Infoln("Рутина ", i, " получена команда на выход")
 					return
 				default:
 					svc.processFilesList(routineNum, svc.fileListQueue)
@@ -190,12 +191,13 @@ func (svc *service) fileListQueue() (string, error) {
 // Получаем путь к файлу из очереди ошибок
 func (svc *service) fileListFromErrors() (string, error) {
 	pe := []ProcessError{}
-	mErr := svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
-		return col.Find(nil).All(&pe)
-	})
+	err := svc.mongoExec(svc.ErrorCollection,
+		func(col *mgo.Collection) error {
+			return col.Find(nil).All(&pe)
+		})
 
-	if mErr != nil {
-		return "", mErr
+	if err != nil {
+		return "", err
 	}
 
 	//TODO: Сделать удаление обработанных
