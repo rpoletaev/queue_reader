@@ -30,7 +30,7 @@ func main() {
 		if svc == nil {
 			w.Write([]byte("Сервис не инициализирован"))
 		}
-		go svc.Run()
+		go svc.ProcessQueue()
 		w.Write([]byte("Сервис запущен"))
 	})
 

@@ -18,12 +18,11 @@ import (
 type service struct {
 	*log.Logger
 	*Config
-	redisPool            *redis.Pool
-	mongo                *mgo.Session
-	errorsProcessRunning bool
-	queueProcessRunning  bool
-	errorsDone           chan bool //канал для остановки процесса обработки ошибок
-	queueDone            chan bool //канал для остановки процесса обработки файлов из очереди
+	redisPool *redis.Pool
+	mongo     *mgo.Session
+	running   bool
+	done      chan bool
+	flist     chan string
 }
 
 // GetService Возвращает настроенный из конфига сервис
@@ -55,75 +54,64 @@ func (svc *service) log() *log.Entry {
 
 // Посылает сигнал об остановке всем запущенным процессам обработки
 func (svc *service) Stop() {
-	for i := 0; i < svc.RoutineCount; i++ {
-		if svc.errorsProcessRunning {
-			svc.errorsDone <- true
-		}
-		if svc.queueProcessRunning {
-			svc.queueDone <- true
-		}
-	}
-
-	if svc.errorsProcessRunning {
-		close(svc.errorsDone)
-	}
-	if svc.queueProcessRunning {
-		close(svc.queueDone)
-	}
-
+	svc.done <- true
+	close(svc.done)
 }
 
 // запустить обработку файлов из очереди загрузки
-func (svc *service) Run() {
-	if svc.queueProcessRunning {
+func (svc *service) run(fileGetterFunc func() (string, error)) {
+	if svc.running {
 		return
 	}
 
-	svc.queueDone = make(chan bool, svc.RoutineCount)
-	svc.queueProcessRunning = true
+	svc.done = make(chan bool, 1)
+	svc.flist = make(chan string, svc.RoutineCount)
+
+	svc.running = true
 	defer func() {
-		svc.queueProcessRunning = false
+		svc.running = false
+	}()
+
+	go func() {
+		defer func() {
+			close(svc.flist)
+			svc.log().Infoln("Exit from function")
+		}()
+
+		for {
+			select {
+			case <-svc.done:
+				return
+			default:
+				queueList, err := fileGetterFunc()
+				if err != nil && err == redis.ErrNil {
+					svc.log().Warning("Нет файлов в очереди")
+					svc.Stop()
+				}
+
+				svc.flist <- queueList
+			}
+		}
 	}()
 
 	for i := 0; i < svc.RoutineCount; i++ {
 		go func(routineNum int) {
 			for {
 				select {
-				case <-svc.queueDone:
-					svc.log().Infoln("Рутина ", i, " получена команда на выход")
-					return
-				default:
-					svc.processFilesList(routineNum, svc.fileListQueue)
+				case list := <-svc.flist:
+					svc.processFilesList(routineNum, list)
 				}
 			}
 		}(i)
 	}
 }
 
-// запустить обработку файлов из очереди ошибок
+func (svc *service) ProcessQueue() {
+	svc.run(svc.fileListQueue)
+}
+
 func (svc *service) ProcessErrors() {
-	if svc.errorsProcessRunning {
-		return
-	}
-
-	svc.errorsDone = make(chan bool, svc.RoutineCount)
-	svc.errorsProcessRunning = true
-	defer func() {
-		svc.errorsProcessRunning = false
-	}()
-
-	for i := 0; i < svc.RoutineCount; i++ {
-		go func(routineNum int) {
-			for {
-				select {
-				case <-svc.errorsDone:
-					return
-				default:
-					svc.processFilesList(routineNum, svc.fileListFromErrors)
-				}
-			}
-		}(i)
-	}
+	svc.run(svc.fileListFromErrors)
 }
 
 // Обрабатываем файл:
@@ -133,13 +121,7 @@ func (svc *service) ProcessErrors() {
 // указывая  тип ошибки, соответствующий этапу обработки. После чего выходим из функции.
 // Если ни на одном из этапов обработки ошибок не возникло, то пытаемся удалить файл с диска.
 // В случае неудачи так же запишем сообщение в очередь ошибок с типом ErrorRemove
-func (svc *service) processFilesList(routineNum int, getListFunc func() (string, error)) {
-	queueList, err := getListFunc()
-	if err != nil {
-		svc.log().Warning("Нет файлов в очереди")
-		time.Sleep(1 * time.Minute)
-		return
-	}
+func (svc *service) processFilesList(routineNum int, queueList string) {
 
 	list := strings.Split(queueList, ",")
 	for _, str := range list {
