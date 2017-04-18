@@ -75,7 +75,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	go func() {
 		defer func() {
 			close(svc.flist)
-			svc.log().Infoln("Exit from function")
+			svc.log().Infoln("Exit from processing queue...")
 		}()
 
 		for {
