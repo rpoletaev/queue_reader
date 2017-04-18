@@ -31,7 +31,7 @@ func newRedisPool(addr string) *redis.Pool {
 		MaxIdle:     3,
 		IdleTimeout: 240 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", addr, redis.DialDatabase(0), redis.DialPassword("nigersex"))
+			return redis.Dial("tcp", addr, redis.DialDatabase(0))
 		},
 	}
 }
