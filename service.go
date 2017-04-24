@@ -202,8 +202,9 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		url := svc.GetServiceURL(ei.Version)
 		err = cli.SendData(url, xmlBts)
 		if err != nil {
-			fmt.Printf("Файл %s | %v\n", path, err)
-			svc.storeFileProcessError(ErrorSend, path, err)
+			sendErr := fmt.Errorf("файл %s | %s | %s | %v\n", ei.Title, ei.Version, path, err)
+			fmt.Println(sendErr)
+			svc.storeFileProcessError(ErrorSend, path, sendErr)
 			continue
 		}
 
