@@ -65,6 +65,8 @@ func GetService(cnf *Config) (*service, error) {
 		_, err := c.RemoveAll(nil)
 		return err
 	})
+
+	go svc.RunRedisSubscribe()
 	return svc, nil
 }
 
@@ -82,16 +84,15 @@ func (svc *service) Stop() {
 		return
 	}
 
-	fmt.Println("Сервис запущен, выходим")
+	println("Остановка сервиса")
 	svc.done <- true
 	close(svc.done)
 }
 
 // запустить обработку файлов из очереди загрузки
 func (svc *service) run(fileGetterFunc func() (string, error)) {
-	fmt.Println("Заходим")
 	if svc.Running() {
-		fmt.Println("Выходим")
+		fmt.Println("Сервис уже запущен. Выходим")
 		return
 	}
 
@@ -100,7 +101,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	var wg sync.WaitGroup
 	wg.Add(svc.RoutineCount)
 
-	svc.done = make(chan bool)
+	svc.done = make(chan bool, 1)
 	svc.flist = make(chan string, svc.RoutineCount)
 	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0))
 	if err != nil {
@@ -115,23 +116,18 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	})
 
 	go func() {
-		defer func() {
-			wg.Wait()
-			svc.redisConn.Close()
-			svc.SetRunning(false)
-			svc.log().Infoln("Обработка завершена")
-		}()
 
 		for {
 			select {
 			case <-svc.done:
-				fmt.Println("Получена команда на выход")
 				close(svc.flist)
 				return
 			default:
 				queueList, err := fileGetterFunc()
 				if err != nil && err == redis.ErrNil {
 					svc.Stop()
+					println("continue")
+					continue
 				}
 
 				for _, p := range strings.Split(queueList, ",") {
@@ -150,6 +146,12 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 			}(i)
 		}
 	}()
+
+	wg.Wait()
+	svc.writeResultMessage()
+	svc.redisConn.Close()
+	svc.SetRunning(false)
+	svc.log().Infoln("Обработка завершена")
 }
 
 func (svc *service) ProcessQueue() {
@@ -174,7 +176,6 @@ var pathStruct ProccessedPath
 // Если ни на одном из этапов обработки ошибок не возникло, то пытаемся удалить файл с диска.
 // В случае неудачи так же запишем сообщение в очередь ошибок с типом ErrorRemove
 func (svc *service) processFile(routineNum int, paths <-chan string) {
-
 	for path := range paths {
 		if path == "" {
 			continue
@@ -204,6 +205,7 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		if err != nil {
 			sendErr := fmt.Errorf("файл %s | %s | %s | %v\n", ei.Title, ei.Version, path, err)
 			fmt.Println(sendErr)
+			printKnownProblem(*ei)
 			svc.storeFileProcessError(ErrorSend, path, sendErr)
 			continue
 		}
@@ -211,6 +213,12 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		if err := os.Remove(path); err != nil {
 			svc.storeFileProcessError(ErrorRemove, path, err)
 		}
+	}
+}
+
+func printKnownProblem(ei expinf.ExportInfo) {
+	if ei.Title == "fcsContractSign" && ei.Version == "1.0" {
+		println("known problem")
 	}
 }
 
@@ -265,51 +273,46 @@ func (svc service) GetServiceURL(version string) string {
 	return url
 }
 
-// func newRedisPool(addr string) *redis.Pool {
-// 	return &redis.Pool{
-// 		MaxIdle:     3,
-// 		IdleTimeout: 240 * time.Second,
-// 		Dial: func() (redis.Conn, error) {
-// 			return redis.Dial("tcp", addr, redis.DialDatabase(0))
-// 		},
-// 	}
-// }
+func (svc *service) RunRedisSubscribe() {
+	time.Sleep(1 * time.Minute)
+	c := svc.redisPool.Get()
 
-// func (svc *service) setupMongo() {
-// 	mongo, err := mgo.Dial(svc.Mongo)
-// 	if err != nil {
-// 		panic(err)
-// 	}
+	psc := redis.PubSubConn{Conn: c}
+	svc.Infoln("Подписываемся на очередь")
+	defer func() {
+		psc.Close()
+		svc.log().Infoln("Отписываемся от событий очереди")
+	}()
 
-// 	svc.mongo = mongo
-// 	svc.mongo.SetMode(mgo.Monotonic, true)
-// }
+	if err := psc.Subscribe("ProccessResult"); err != nil {
+		svc.Error(err)
+		return
+	}
 
-// func (svc *service) mongoExec(colectionName string, execFunc func(*mgo.Collection) error) error {
-// 	session := svc.mongo.Clone()
-// 	defer session.Close()
+	for {
+		switch n := psc.Receive().(type) {
+		case redis.Message:
+			svc.log().Infof("%v", n)
+			svc.ProcessQueue()
+		case redis.PMessage:
+			svc.log().Infof("%v", n)
+			svc.ProcessQueue()
+		case redis.Subscription:
+			svc.log().Infof("Subscription: %s %s %d\n", n.Kind, n.Channel, n.Count)
+			if n.Count == 0 {
+				return
+			}
+		case error:
+			svc.log().Errorf("error: %v\n", n)
+			return
+		}
+	}
 
-// 	db := session.DB(svc.MongoDB)
-// 	collection := db.C(colectionName)
-// 	return execFunc(collection)
-// }
+}
 
-// func (svc *service) ClearQueue() error {
-// 	conn := svc.redisPool.Get()
-// 	defer conn.Close()
-// 	_, err := conn.Do("DEL", "FileQueue")
-// 	return err
-// }
-
-// func (svc *service) ClearErrorQueue() (removed int, err error) {
-// 	svc.mongoExec(svc.ErrorCollection, func(c *mgo.Collection) error {
-// 		i, err := c.RemoveAll(nil)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		removed = i.Removed
-// 		return nil
-// 	})
-// 	return removed, err
-// }
+func (svc *service) writeResultMessage() {
+	c := svc.redisPool.Get()
+	if _, err := c.Do("PUBLISH", "FTPBuilderResult", time.Now().Unix()); err != nil {
+		println("Error on sending result: %v\n", err)
+	}
+}
