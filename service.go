@@ -58,7 +58,7 @@ func GetService(cnf *Config) (*service, error) {
 	svc.Hooks.Add(logHook)
 	log.SetLevel(log.ErrorLevel)
 
-	svc.redisPool = newRedisPool(cnf.RedisAddress)
+	svc.redisPool = newRedisPool(cnf.RedisAddress, cnf.RedisPassword)
 
 	svc.setupMongo()
 	svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
@@ -92,7 +92,7 @@ func (svc *service) Stop() {
 // запустить обработку файлов из очереди загрузки
 func (svc *service) run(fileGetterFunc func() (string, error)) {
 	if svc.Running() {
-		fmt.Println("Сервис уже запущен. Выходим")
+		println("Сервис уже запущен. Выходим")
 		return
 	}
 
@@ -103,17 +103,17 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	svc.done = make(chan bool, 1)
 	svc.flist = make(chan string, svc.RoutineCount)
-	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0))
+	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0), redis.DialPassword(svc.RedisPassword))
 	if err != nil {
 		panic(err)
 	}
 
 	svc.redisConn = rc
 
-	svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
-		_, err := c.RemoveAll(nil)
-		return err
-	})
+	// svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
+	// 	_, err := c.RemoveAll(nil)
+	// 	return err
+	// })
 
 	go func() {
 
@@ -124,9 +124,8 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 				return
 			default:
 				queueList, err := fileGetterFunc()
-				if err != nil && err == redis.ErrNil {
+				if err != nil {
 					svc.Stop()
-					println("continue")
 					continue
 				}
 
@@ -141,7 +140,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 		for i := 0; i < svc.RoutineCount; i++ {
 			go func(routineNum int) {
 				svc.processFile(routineNum, svc.flist)
-				fmt.Println("Выходим из процесса #", routineNum)
+				println("Выходим из процесса #", routineNum)
 				wg.Done()
 			}(i)
 		}
@@ -162,11 +161,11 @@ func (svc *service) ProcessErrors() {
 	svc.run(svc.fileListFromErrors)
 }
 
-type ProccessedPath struct {
-	Path string `bson:"path"`
-}
+// type ProccessedPath struct {
+// 	Path string `bson:"path"`
+// }
 
-var pathStruct ProccessedPath
+// var pathStruct ProccessedPath
 
 // Обрабатываем файл:
 // Получаем из источника посредством getFileFunc(), например из очереди сервиса загрузки файлов
@@ -176,15 +175,16 @@ var pathStruct ProccessedPath
 // Если ни на одном из этапов обработки ошибок не возникло, то пытаемся удалить файл с диска.
 // В случае неудачи так же запишем сообщение в очередь ошибок с типом ErrorRemove
 func (svc *service) processFile(routineNum int, paths <-chan string) {
+	cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
 	for path := range paths {
 		if path == "" {
 			continue
 		}
 
-		pathStruct.Path = path
-		svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
-			return c.Insert(pathStruct)
-		})
+		// pathStruct.Path = path
+		// svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
+		// 	return c.Insert(pathStruct)
+		// })
 
 		xmlBts, err := ioutil.ReadFile(path)
 		if err != nil {
@@ -199,7 +199,6 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 			continue
 		}
 
-		cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
 		url := svc.GetServiceURL(ei.Version)
 		err = cli.SendData(url, xmlBts)
 		if err != nil {
@@ -274,7 +273,7 @@ func (svc service) GetServiceURL(version string) string {
 }
 
 func (svc *service) RunRedisSubscribe() {
-	time.Sleep(1 * time.Minute)
+	time.Sleep(30 * time.Second)
 	c := svc.redisPool.Get()
 
 	psc := redis.PubSubConn{Conn: c}

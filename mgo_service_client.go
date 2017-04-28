@@ -32,9 +32,9 @@ func (cli *client) SendData(url string, data []byte) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
 		respBuf := bytes.NewBuffer(make([]byte, 0, resp.ContentLength))
 		respBuf.ReadFrom(resp.Body)
+		resp.Body.Close()
 		return errors.New(respBuf.String())
 	}
 	return nil

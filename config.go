@@ -10,6 +10,7 @@ type Config struct {
 	MongoDB         string              `yaml:"mongo_db"`
 	ErrorCollection string              `yaml:"mongo_err_collection"`
 	RedisAddress    string              `yaml:"redis_address"`
+	RedisPassword   string              `yaml:"redis_password"`
 	RoutineCount    int                 `yaml:"routine_count"`
 	ServicePreffix  string              `yaml:"service_preffix"`
 	ServicePort     string              `yaml:"service_port"`

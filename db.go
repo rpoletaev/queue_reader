@@ -26,12 +26,12 @@ func (svc *service) mongoExec(colectionName string, execFunc func(*mgo.Collectio
 	return execFunc(collection)
 }
 
-func newRedisPool(addr string) *redis.Pool {
+func newRedisPool(addr, pwd string) *redis.Pool {
 	return &redis.Pool{
 		MaxIdle:     3,
 		IdleTimeout: 240 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", addr, redis.DialDatabase(0))
+			return redis.Dial("tcp", addr, redis.DialDatabase(0), redis.DialPassword(pwd))
 		},
 	}
 }
