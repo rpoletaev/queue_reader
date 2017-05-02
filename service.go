@@ -6,13 +6,13 @@ import (
 	"os"
 	"time"
 
-	"strings"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/garyburd/redigo/redis"
 	expinf "github.com/rpoletaev/exportinfo"
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
+	"runtime/debug"
+	"strings"
 	//"path/filepath"
 	"sync"
 )
@@ -147,6 +147,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	}()
 
 	wg.Wait()
+	debug.FreeOSMemory()
 	svc.writeResultMessage()
 	svc.redisConn.Close()
 	svc.SetRunning(false)
@@ -204,7 +205,7 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		if err != nil {
 			sendErr := fmt.Errorf("файл %s | %s | %s | %v\n", ei.Title, ei.Version, path, err)
 			fmt.Println(sendErr)
-			printKnownProblem(*ei)
+			//printKnownProblem(*ei)
 			svc.storeFileProcessError(ErrorSend, path, sendErr)
 			continue
 		}
