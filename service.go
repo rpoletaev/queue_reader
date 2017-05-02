@@ -223,7 +223,7 @@ func printKnownProblem(ei expinf.ExportInfo) {
 
 // Получаем путь к файлу из очереди сервиса загрузки
 func (svc *service) fileListQueue() (string, error) {
-	return redis.String(svc.redisConn.Do("RPOP", "FileQueue"))
+	return redis.String(svc.redisConn.Do("SPOP", "FileQueue"))
 }
 
 // Получаем путь к файлу из очереди ошибок
