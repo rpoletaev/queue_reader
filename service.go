@@ -19,6 +19,8 @@ import (
 
 var queueMutex sync.Mutex
 
+const MaxFileSize = 16793600
+
 type service struct {
 	*log.Logger
 	*Config
@@ -186,6 +188,10 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		// svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
 		// 	return c.Insert(pathStruct)
 		// })
+		fi, _ := os.Stat(path)
+		if fi.Size() > MaxFileSize {
+			svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", fi.Size()))
+		}
 
 		xmlBts, err := ioutil.ReadFile(path)
 		if err != nil {
