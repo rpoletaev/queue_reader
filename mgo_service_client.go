@@ -24,17 +24,22 @@ func (cli *client) SendData(url string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer req.Body.Close()
 
 	// req.Header.Set("Content-Type", "application/xml")
 	resp, err := cli.client.Do(req)
+	req.Body.Close()
 	if err != nil {
 		return err
 	}
+
 	if resp.StatusCode != http.StatusOK {
 		respBuf := bytes.NewBuffer(make([]byte, 0, resp.ContentLength))
 		respBuf.ReadFrom(resp.Body)
-		resp.Body.Close()
+		defer func() {
+			resp.Body.Close()
+			respBuf.Truncate(0)
+		}()
+
 		return errors.New(respBuf.String())
 	}
 	return nil

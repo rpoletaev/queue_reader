@@ -14,10 +14,19 @@ import (
 	"runtime/debug"
 	"strings"
 	//"path/filepath"
+	"bytes"
 	"sync"
 )
 
 var queueMutex sync.Mutex
+var verMap map[string]string
+
+const linkTemplate = "http://%s%s:%s/load"
+const errDataSendTemplate = "файл %s | %s | %s | %v"
+
+func init() {
+	verMap = make(map[string]string, 0)
+}
 
 const MaxFileSize = 16793600
 
@@ -184,23 +193,21 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 			continue
 		}
 
-		// pathStruct.Path = path
-		// svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
-		// 	return c.Insert(pathStruct)
-		// })
-		fi, _ := os.Stat(path)
-		if fi.Size() > MaxFileSize {
-			svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", fi.Size()))
+		xmlBts, err := ioutil.ReadFile(path)
+		if len(xmlBts) > MaxFileSize {
+			svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", len(xmlBts)))
 		}
 
-		xmlBts, err := ioutil.ReadFile(path)
 		if err != nil {
 			svc.storeFileProcessError(ErrorReadFile, path, err)
 			fmt.Printf("Routine %d: не удалось прочесть файл: %v\n", routineNum, err)
 			continue
 		}
 
-		ei, err := expinf.GetExportInfo(string(xmlBts))
+		buf := bytes.NewBuffer(xmlBts)
+		verStr := getVersionString(buf)
+
+		ei, err := expinf.GetExportInfo(verStr) //string(xmlBts[0 : len(xmlBts)/3])
 		if err != nil {
 			svc.storeFileProcessError(ErrorExportInfo, path, err)
 			continue
@@ -208,8 +215,10 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 
 		url := svc.GetServiceURL(ei.Version)
 		err = cli.SendData(url, xmlBts)
+		xmlBts = nil
+
 		if err != nil {
-			sendErr := fmt.Errorf("файл %s | %s | %s | %v\n", ei.Title, ei.Version, path, err)
+			sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
 			fmt.Println(sendErr)
 			//printKnownProblem(*ei)
 			svc.storeFileProcessError(ErrorSend, path, sendErr)
@@ -258,21 +267,23 @@ func (svc *service) fileListFromErrors() (string, error) {
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
 func (svc service) GetServiceURL(version string) string {
-	var vSuffix string
-	switch version {
-	case "1.0":
-		vSuffix = "0.9.2"
-	case "4.2":
-		vSuffix = "4.4"
-	case "4.3":
-		vSuffix = "4.4"
-	case "4.3.100":
-		vSuffix = "4.4"
-	default:
-		vSuffix = version
+	if _, ok := verMap[version]; !ok {
+
+		switch version {
+		case "1.0":
+			verMap[version] = "0.9.2"
+		case "4.2":
+			verMap[version] = "4.4"
+		case "4.3":
+			verMap[version] = "4.4"
+		case "4.3.100":
+			verMap[version] = "4.4"
+		default:
+			verMap[version] = version
+		}
 	}
 
-	url := fmt.Sprintf("http://%s%s:%s/load", svc.ServicePreffix, vSuffix, svc.ServicePort)
+	url := fmt.Sprintf(linkTemplate, svc.ServicePreffix, verMap[version], svc.ServicePort)
 	if svc.NeedLogingURL {
 		svc.log().Info(url)
 	}
@@ -318,7 +329,24 @@ func (svc *service) RunRedisSubscribe() {
 
 func (svc *service) writeResultMessage() {
 	c := svc.redisPool.Get()
-	if _, err := c.Do("PUBLISH", "FTPBuilderResult", time.Now().Unix()); err != nil {
+	if _, err := c.Do("PUBLISH", "", time.Now().Unix()); err != nil {
 		println("Error on sending result: %v\n", err)
+	}
+}
+
+func getVersionString(buf *bytes.Buffer) string {
+	for line, err := buf.ReadString('\n'); ; line, err = buf.ReadString('\n') {
+		if err != nil {
+			fmt.Println(err)
+			return ""
+		}
+
+		if strings.Contains(line, "schemeVersion") {
+			return line
+		}
+
+		if line == "" {
+			return ""
+		}
 	}
 }
