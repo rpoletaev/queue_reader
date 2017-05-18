@@ -16,11 +16,13 @@ import (
 	mgo "gopkg.in/mgo.v2"
 	//"path/filepath"
 	"bytes"
+	"errors"
 	"sync"
 )
 
-var queueMutex sync.Mutex
+var serviceURLMu sync.Mutex
 var verMap map[string]string
+var errEmptyVerString = errors.New("Не удалось найти строку с версией")
 
 const linkTemplate = "http://%s%s:%s/load"
 const errDataSendTemplate = "файл %s | %s | %s | %v"
@@ -196,7 +198,7 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		}
 
 		//===================================
-		println(path)
+		//println(path)
 		//===================================
 
 		xmlBts, err := ioutil.ReadFile(path)
@@ -212,6 +214,10 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 
 		buf := bytes.NewBuffer(xmlBts)
 		verStr := getVersionString(buf)
+		if verStr == "" {
+			svc.storeFileProcessError(ErrorExportInfo, path, errEmptyVerString)
+			continue
+		}
 
 		ei, err := expinf.GetExportInfo(verStr) //string(xmlBts[0 : len(xmlBts)/3])
 		if err != nil {
@@ -219,16 +225,14 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 			continue
 		}
 
-		fmt.Printf("%v\n", ei)
-		svc.Stop()
 		url := svc.GetServiceURL(ei.Version)
 		err = cli.SendData(url, xmlBts)
 		xmlBts = nil
 
 		if err != nil {
 			sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
-			fmt.Println(sendErr)
-			svc.Stop()
+			fmt.Println("SEND ERR ", sendErr)
+
 			//printKnownProblem(*ei)
 			svc.storeFileProcessError(ErrorSend, path, sendErr)
 
@@ -277,6 +281,9 @@ func (svc *service) fileListFromErrors() (string, error) {
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
 func (svc service) GetServiceURL(version string) string {
+	serviceURLMu.Lock()
+	defer serviceURLMu.Unlock()
+
 	if _, ok := verMap[version]; !ok {
 
 		switch version {
@@ -339,7 +346,7 @@ func (svc *service) RunRedisSubscribe() {
 
 func (svc *service) writeResultMessage() {
 	c := svc.redisPool.Get()
-	if _, err := c.Do("PUBLISH", "", time.Now().Unix()); err != nil {
+	if _, err := c.Do("PUBLISH", "FTPBuilderResult", time.Now().Unix()); err != nil {
 		println("Error on sending result: %v\n", err)
 	}
 }
