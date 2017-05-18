@@ -6,13 +6,14 @@ import (
 	"os"
 	"time"
 
+	"runtime/debug"
+	"strings"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/garyburd/redigo/redis"
 	expinf "github.com/rpoletaev/exportinfo"
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
-	"runtime/debug"
-	"strings"
 	//"path/filepath"
 	"bytes"
 	"sync"
@@ -98,6 +99,7 @@ func (svc *service) Stop() {
 	println("Остановка сервиса")
 	svc.done <- true
 	close(svc.done)
+	svc.SetRunning(false)
 }
 
 // запустить обработку файлов из очереди загрузки
@@ -193,6 +195,10 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 			continue
 		}
 
+		//===================================
+		println(path)
+		//===================================
+
 		xmlBts, err := ioutil.ReadFile(path)
 		if len(xmlBts) > MaxFileSize {
 			svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", len(xmlBts)))
@@ -213,6 +219,8 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 			continue
 		}
 
+		fmt.Printf("%v\n", ei)
+		svc.Stop()
 		url := svc.GetServiceURL(ei.Version)
 		err = cli.SendData(url, xmlBts)
 		xmlBts = nil
@@ -220,8 +228,10 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		if err != nil {
 			sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
 			fmt.Println(sendErr)
+			svc.Stop()
 			//printKnownProblem(*ei)
 			svc.storeFileProcessError(ErrorSend, path, sendErr)
+
 			continue
 		}
 
