@@ -15,8 +15,10 @@ import (
 	"github.com/weekface/mgorus"
 	mgo "gopkg.in/mgo.v2"
 	//"path/filepath"
+	// "bufio"
 	"bytes"
 	"errors"
+	"io"
 	"sync"
 )
 
@@ -26,6 +28,8 @@ var errEmptyVerString = errors.New("Не удалось найти строку 
 
 const linkTemplate = "http://%s%s:%s/load"
 const errDataSendTemplate = "файл %s | %s | %s | %v"
+const schemeVerString = "schemeVersion"
+const lenVerOffset = 50
 
 func init() {
 	verMap = make(map[string]string, 0)
@@ -213,9 +217,10 @@ func (svc *service) processFile(routineNum int, paths <-chan string) {
 		}
 
 		buf := bytes.NewBuffer(xmlBts)
-		verStr := getVersionString(buf)
-		if verStr == "" {
-			svc.storeFileProcessError(ErrorExportInfo, path, errEmptyVerString)
+		verStr, err := getVersionString(buf)
+		if err != nil {
+			fmt.Println("Error version string ", err.Error(), " ", path)
+			svc.storeFileProcessError(ErrorExportInfo, path, err)
 			continue
 		}
 
@@ -351,19 +356,27 @@ func (svc *service) writeResultMessage() {
 	}
 }
 
-func getVersionString(buf *bytes.Buffer) string {
+func getVersionString(buf *bytes.Buffer) (string, error) {
 	for line, err := buf.ReadString('\n'); ; line, err = buf.ReadString('\n') {
 		if err != nil {
-			fmt.Println(err)
-			return ""
+			if err == io.EOF {
+				i := strings.Index(line, schemeVerString)
+				if i < 0 {
+					return "", errEmptyVerString
+				}
+
+				return line[0 : i+lenVerOffset], nil
+			}
+
+			return "", err
 		}
 
-		if strings.Contains(line, "schemeVersion") {
-			return line
+		if strings.Contains(line, schemeVerString) {
+			return line, nil
 		}
 
 		if line == "" {
-			return ""
+			return "", errEmptyVerString
 		}
 	}
 }
