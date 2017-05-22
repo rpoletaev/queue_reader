@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 
-	"runtime/debug"
-	"strings"
-
 	log "github.com/Sirupsen/logrus"
+	"github.com/centrifugal/gocent"
 	"github.com/garyburd/redigo/redis"
 	expinf "github.com/rpoletaev/exportinfo"
 	"github.com/weekface/mgorus"
@@ -43,6 +44,7 @@ type service struct {
 	redisPool *redis.Pool
 	redisConn redis.Conn
 	mongo     *mgo.Session
+	wsClient  *gocent.Client
 	runningMu sync.RWMutex
 	running   bool
 	done      chan bool
@@ -85,6 +87,7 @@ func GetService(cnf *Config) (*service, error) {
 	})
 
 	go svc.RunRedisSubscribe()
+	svc.wsClient = gocent.NewClient("http://"+svc.WSConfig.Host+":"+svc.WSConfig.Port, svc.WSConfig.Secret, 5*time.Second)
 	return svc, nil
 }
 
@@ -116,6 +119,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	}
 
 	svc.SetRunning(true)
+	svc.WsNotify()
 
 	var wg sync.WaitGroup
 	wg.Add(svc.RoutineCount)
@@ -353,6 +357,13 @@ func (svc *service) writeResultMessage() {
 	c := svc.redisPool.Get()
 	if _, err := c.Do("PUBLISH", "FTPBuilderResult", time.Now().Unix()); err != nil {
 		println("Error on sending result: %v\n", err)
+	}
+}
+
+func (svc *service) WsNotify() {
+	_, err := svc.wsClient.Publish(svc.WSConfig.Channel, []byte(`{"system": "queue_reader", "time": "`+strconv.FormatInt(time.Now().Unix(), 10)+`"}`))
+	if err != nil {
+		println(err.Error())
 	}
 }
 

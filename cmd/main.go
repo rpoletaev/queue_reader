@@ -43,13 +43,13 @@ func main() {
 		w.Write([]byte("Ай, кто к нам пришел :)"))
 	})
 
-	http.HandleFunc("/clear_queue", func(w http.ResponseWriter, r *http.Request) {
-		if err := svc.ClearQueue(); err != nil {
-			w.Write([]byte(err.Error()))
-			return
-		}
-		w.Write([]byte("Очередь очищена"))
-	})
+	// http.HandleFunc("/clear_queue", func(w http.ResponseWriter, r *http.Request) {
+	// 	if err := svc.ClearQueue(); err != nil {
+	// 		w.Write([]byte(err.Error()))
+	// 		return
+	// 	}
+	// 	w.Write([]byte("Очередь очищена"))
+	// })
 
 	http.HandleFunc("/process_errors", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Запущена обработка ошибок"))

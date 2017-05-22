@@ -16,3 +16,9 @@ log_hook:
     log_db_host: "mongodb://mongo:27017"
     log_dbname: admin
     log_collection: app_logs
+
+ws_config:
+    ws_secret: some-secret-key
+    ws_host: centrifugo
+    ws_port: "8000"
+    ws_channel: "events"

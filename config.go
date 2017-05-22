@@ -16,6 +16,7 @@ type Config struct {
 	ServicePort     string              `yaml:"service_port"`
 	NeedLogingURL   bool                `yaml:"loging_url"`
 	ClientTimeOut   int                 `yaml:"client_timeout"`
+	WSConfig        *CentrifugoConfig   `yaml:"ws_config"`
 }
 
 // MongoLogHookConfig описывает структуру для записи логов в MongoDB
@@ -25,4 +26,12 @@ type MongoLogHookConfig struct {
 	DBHost     string `yaml:"log_db_host"`
 	DBName     string `yaml:"log_dbname"`
 	Collection string `yaml:"log_collection"`
+}
+
+//CentrifugoConfig описывает структуру для настройки работы с centrifugo
+type CentrifugoConfig struct {
+	Secret  string `yaml:"ws_secret"`
+	Host    string `yaml:"ws_host"`
+	Port    string `yaml:"ws_port"`
+	Channel string `yaml:"ws_channel"`
 }
