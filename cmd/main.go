@@ -51,6 +51,9 @@ func main() {
 	// 	w.Write([]byte("Очередь очищена"))
 	// })
 
+	http.HandleFunc("/get_errors", svc.GetErrors)
+	http.HandleFunc("/showDocument/*", svc.GetErrDoc)
+
 	http.HandleFunc("/process_errors", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Запущена обработка ошибок"))
 		svc.ProcessErrors()
