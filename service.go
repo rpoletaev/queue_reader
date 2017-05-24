@@ -133,11 +133,6 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	svc.redisConn = rc
 
-	// svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
-	// 	_, err := c.RemoveAll(nil)
-	// 	return err
-	// })
-
 	go func() {
 
 		for {
@@ -162,7 +157,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	go func() {
 		for i := 0; i < svc.RoutineCount; i++ {
 			go func(routineNum int) {
-				svc.processFile(routineNum, svc.flist)
+				svc.runProcessWorker(svc.flist)
 				println("Выходим из процесса #", routineNum)
 				wg.Done()
 			}(i)
@@ -174,22 +169,19 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	svc.writeResultMessage()
 	svc.redisConn.Close()
 	svc.SetRunning(false)
-	svc.log().Infoln("Обработка завершена")
+	//svc.log().Infoln("Обработка завершена")
+}
+
+func (svc *service) runProcessWorker(paths <-chan string) {
+	cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
+	for path := range paths {
+		svc.ProcessFile(path, cli)
+	}
 }
 
 func (svc *service) ProcessQueue() {
 	svc.run(svc.fileListQueue)
 }
-
-func (svc *service) ProcessErrors() {
-	svc.run(svc.fileListFromErrors)
-}
-
-// type ProccessedPath struct {
-// 	Path string `bson:"path"`
-// }
-
-// var pathStruct ProccessedPath
 
 // Обрабатываем файл:
 // Получаем из источника посредством getFileFunc(), например из очереди сервиса загрузки файлов
@@ -198,94 +190,50 @@ func (svc *service) ProcessErrors() {
 // указывая  тип ошибки, соответствующий этапу обработки. После чего выходим из функции.
 // Если ни на одном из этапов обработки ошибок не возникло, то пытаемся удалить файл с диска.
 // В случае неудачи так же запишем сообщение в очередь ошибок с типом ErrorRemove
-func (svc *service) processFile(routineNum int, paths <-chan string) {
-	cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
-	for path := range paths {
-		if path == "" {
-			continue
-		}
-
-		//===================================
-		//println(path)
-		//===================================
-
-		xmlBts, err := ioutil.ReadFile(path)
-		if len(xmlBts) > MaxFileSize {
-			svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", len(xmlBts)))
-		}
-
-		if err != nil {
-			svc.storeFileProcessError(ErrorReadFile, path, err)
-			fmt.Printf("Routine %d: не удалось прочесть файл: %v\n", routineNum, err)
-			continue
-		}
-
-		buf := bytes.NewBuffer(xmlBts)
-		verStr, err := getVersionString(buf)
-		if err != nil {
-			fmt.Println("Error version string ", err.Error(), " ", path)
-			svc.storeFileProcessError(ErrorExportInfo, path, err)
-			continue
-		}
-
-		ei, err := expinf.GetExportInfo(verStr) //string(xmlBts[0 : len(xmlBts)/3])
-		if err != nil {
-			svc.storeFileProcessError(ErrorExportInfo, path, err)
-			continue
-		}
-
-		url := svc.GetServiceURL(ei.Version)
-		err = cli.SendData(url, xmlBts)
-		xmlBts = nil
-
-		if err != nil {
-			sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
-			fmt.Println("SEND ERR ", sendErr)
-
-			//printKnownProblem(*ei)
-			svc.storeFileProcessError(ErrorSend, path, sendErr)
-
-			continue
-		}
-
-		if err := os.Remove(path); err != nil {
-			svc.storeFileProcessError(ErrorRemove, path, err)
-		}
+func (svc *service) ProcessFile(path string, c *client) {
+	if path == "" {
+		return
 	}
-}
 
-func printKnownProblem(ei expinf.ExportInfo) {
-	if ei.Title == "fcsContractSign" && ei.Version == "1.0" {
-		println("known problem")
+	xmlBts, err := ioutil.ReadFile(path)
+	if len(xmlBts) > MaxFileSize {
+		svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", len(xmlBts)))
+	}
+
+	if err != nil {
+		svc.storeFileProcessError(ErrorReadFile, path, err)
+		fmt.Printf("Не удалось прочесть файл: %v\n", err)
+	}
+
+	buf := bytes.NewBuffer(xmlBts)
+	verStr, err := getVersionString(buf)
+	if err != nil {
+		fmt.Println("Error version string ", err.Error(), " ", path)
+		svc.storeFileProcessError(ErrorExportInfo, path, err)
+	}
+
+	ei, err := expinf.GetExportInfo(verStr) //string(xmlBts[0 : len(xmlBts)/3])
+	if err != nil {
+		svc.storeFileProcessError(ErrorExportInfo, path, err)
+	}
+
+	url := svc.GetServiceURL(ei.Version)
+	err = c.SendData(url, xmlBts)
+	xmlBts = nil
+
+	if err != nil {
+		sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
+		svc.storeFileProcessError(ErrorSend, path, sendErr)
+	}
+
+	if err := os.Remove(path); err != nil {
+		svc.storeFileProcessError(ErrorRemove, path, err)
 	}
 }
 
 // Получаем путь к файлу из очереди сервиса загрузки
 func (svc *service) fileListQueue() (string, error) {
 	return redis.String(svc.redisConn.Do("SPOP", "FileQueue"))
-}
-
-// Получаем путь к файлу из очереди ошибок
-func (svc *service) fileListFromErrors() (string, error) {
-	pe := []ProcessError{}
-	err := svc.mongoExec(svc.ErrorCollection,
-		func(col *mgo.Collection) error {
-			return col.Find(nil).All(&pe)
-		})
-
-	if err != nil {
-		return "", err
-	}
-
-	//TODO: Сделать удаление обработанных
-	// svc.mongoExec(svc.ErrorCollection, func(col *mgo.Collection) error {
-	// 	return col.RemoveId(pe.ID)
-	// })
-	fileList := make([]string, len(pe), len(pe))
-	for i, p := range pe {
-		fileList[i] = p.FilePath
-	}
-	return strings.Join(fileList, ","), nil
 }
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
