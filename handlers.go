@@ -2,11 +2,12 @@ package queue_reader
 
 import (
 	"encoding/json"
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
+	"fmt"
 	"io/ioutil"
 	"net/http"
-	"strings"
+
+	mgo "gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 )
 
 func (svc *service) GetErrors(w http.ResponseWriter, r *http.Request) {
@@ -32,8 +33,11 @@ func (svc *service) GetErrors(w http.ResponseWriter, r *http.Request) {
 
 func (svc *service) GetErrDoc(w http.ResponseWriter, r *http.Request) {
 	errDoc := ProcessError{}
-	urlSpl := strings.Split(r.URL.RawPath, "/")
-	id := bson.ObjectIdHex(urlSpl[len(urlSpl)-1])
+	pars := r.URL.Query()
+	id := bson.ObjectIdHex(pars.Get("id"))
+	fmt.Printf("%v\n", id)
+	// urlSpl := strings.Split(r.URL.RawPath, "/")
+	// urlSpl[len(urlSpl)-1])
 	err := svc.mongoExec(svc.ErrorCollection, func(c *mgo.Collection) error {
 		return c.FindId(id).One(&errDoc)
 	})
