@@ -19,7 +19,7 @@ import (
 	// "bufio"
 	"bytes"
 	"errors"
-	"io"
+	//"io"
 	"sync"
 )
 
@@ -30,7 +30,7 @@ var errEmptyVerString = errors.New("Не удалось найти строку 
 const linkTemplate = "http://%s%s:%s/load"
 const errDataSendTemplate = "файл %s | %s | %s | %v"
 const schemeVerString = "schemeVersion"
-const lenVerOffset = 50
+const lenVerOffset = 200
 
 func init() {
 	verMap = make(map[string]string, 0)
@@ -134,18 +134,23 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	svc.redisConn = rc
 
 	go func() {
-
+		i := 0
 		for {
 			select {
 			case <-svc.done:
 				close(svc.flist)
 				return
 			default:
+				if i == 2 {
+					svc.Stop()
+				}
 				queueList, err := fileGetterFunc()
 				if err != nil {
 					svc.Stop()
 					continue
 				}
+
+				i++
 
 				for _, p := range strings.Split(queueList, ",") {
 					svc.flist <- p
@@ -166,10 +171,9 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	wg.Wait()
 	debug.FreeOSMemory()
-	svc.writeResultMessage()
+	// svc.writeResultMessage()
 	svc.redisConn.Close()
 	svc.SetRunning(false)
-	//svc.log().Infoln("Обработка завершена")
 }
 
 func (svc *service) runProcessWorker(paths <-chan string) {
@@ -195,6 +199,8 @@ func (svc *service) ProcessFile(path string, c *client) {
 		return
 	}
 
+	println(path)
+
 	xmlBts, err := ioutil.ReadFile(path)
 	if len(xmlBts) > MaxFileSize {
 		svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", len(xmlBts)))
@@ -203,20 +209,24 @@ func (svc *service) ProcessFile(path string, c *client) {
 	if err != nil {
 		svc.storeFileProcessError(ErrorReadFile, path, err)
 		fmt.Printf("Не удалось прочесть файл: %v\n", err)
+		return
 	}
 
 	buf := bytes.NewBuffer(xmlBts)
-	verStr, err := getVersionString(buf)
+	verStr, err := getVersionString(buf, docTypeFromPath(path))
 	if err != nil {
 		fmt.Println("Error version string ", err.Error(), " ", path)
 		svc.storeFileProcessError(ErrorExportInfo, path, err)
+		return
 	}
 
 	ei, err := expinf.GetExportInfo(verStr) //string(xmlBts[0 : len(xmlBts)/3])
 	if err != nil {
 		svc.storeFileProcessError(ErrorExportInfo, path, err)
+		return
 	}
 
+	fmt.Printf("%+v\n", *ei)
 	url := svc.GetServiceURL(ei.Version)
 	err = c.SendData(url, xmlBts)
 	xmlBts = nil
@@ -224,10 +234,12 @@ func (svc *service) ProcessFile(path string, c *client) {
 	if err != nil {
 		sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
 		svc.storeFileProcessError(ErrorSend, path, sendErr)
+		return
 	}
 
 	if err := os.Remove(path); err != nil {
 		svc.storeFileProcessError(ErrorRemove, path, err)
+		return
 	}
 }
 
@@ -315,27 +327,35 @@ func (svc *service) WsNotify() {
 	}
 }
 
-func getVersionString(buf *bytes.Buffer) (string, error) {
-	for line, err := buf.ReadString('\n'); ; line, err = buf.ReadString('\n') {
+//ищет строку содержащую schemeVerString
+func getVersionString(buf *bytes.Buffer, docType string) (string, error) {
+	docTypeIndex := -1
+
+	for line, err := buf.ReadString('>'); ; line, err = buf.ReadString('>') {
+		if strings.Contains(line, schemeVerString) {
+			return strings.TrimSpace(line), nil
+		}
+
+		docTypeIndex = strings.Index(line, docType)
+		if docTypeIndex > 0 {
+			schemeVer := " " + schemeVerString + `="1.0"`
+			res := make([]byte, len(line)+len(schemeVer))
+			docTypeLastIndex := docTypeIndex + len(docType)
+
+			copy(res[:docTypeLastIndex], line[:docTypeLastIndex])
+			res = append(res, []byte(schemeVer)...)
+			res = append(res, line[docTypeLastIndex:]...)
+			return strings.TrimSpace(string(res)), nil
+		}
+
 		if err != nil {
-			if err == io.EOF {
-				i := strings.Index(line, schemeVerString)
-				if i < 0 {
-					return "", errEmptyVerString
-				}
-
-				return line[0 : i+lenVerOffset], nil
-			}
-
 			return "", err
 		}
-
-		if strings.Contains(line, schemeVerString) {
-			return line, nil
-		}
-
-		if line == "" {
-			return "", errEmptyVerString
-		}
 	}
+}
+
+func docTypeFromPath(path string) string {
+	startIndex := strings.LastIndex(path, "/") + 1
+	lastIndex := strings.Index(path[startIndex:], "_")
+	return path[startIndex : startIndex+lastIndex]
 }

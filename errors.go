@@ -6,10 +6,6 @@ import (
 	mgo "gopkg.in/mgo.v2"
 )
 
-func (svc *service) ProcessErrors() {
-	svc.run(svc.fileListFromErrors)
-}
-
 // Получаем путь к файлу из очереди ошибок
 func (svc *service) fileListFromErrors() (string, error) {
 	pe := []ProcessError{}
