@@ -6,10 +6,11 @@ import (
 	"net/http"
 
 	"bytes"
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 	"net/url"
 	"strconv"
+
+	mgo "gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 	// "strings"
 	"fmt"
 )
@@ -83,10 +84,18 @@ func (svc *service) GetErrDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *service) ProcessErrorsHandler(w http.ResponseWriter, r *http.Request) {
-	go svc.run(func() (string, error) {
+	searchCriteria := getErrSerchCriteriaFromURL(r.URL.Query())
+	errorsGetter := svc.getErrorsGetterFunc(searchCriteria)
+	go svc.run(errorsGetter)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (svc *service) getErrorsGetterFunc(searchCriteria bson.M) func() (string, error) {
+	return func() (string, error) {
 		res := make([]ProcessError, 50)
 		err := svc.mongoExec("queue_reader_process_errors", func(c *mgo.Collection) error {
-			return c.Find(getErrSerchCriteriaFromURL(r.URL.Query())).Limit(50).All(&res)
+			return c.Find(searchCriteria).Limit(50).All(&res)
 		})
 
 		if err != nil {
@@ -105,11 +114,8 @@ func (svc *service) ProcessErrorsHandler(w http.ResponseWriter, r *http.Request)
 			fmt.Printf("%v\n", err)
 		}
 		return getFilePathsFromProcessErrors(res), nil
-	})
-
-	w.WriteHeader(http.StatusOK)
+	}
 }
-
 func getIDs(pes []ProcessError) []bson.ObjectId {
 	ids := make([]bson.ObjectId, len(pes))
 	for i, pe := range pes {
