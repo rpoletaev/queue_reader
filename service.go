@@ -112,7 +112,7 @@ func (svc *service) Stop() {
 }
 
 // запустить обработку файлов из очереди загрузки
-func (svc *service) run(fileGetterFunc func() (string, error)) {
+func (svc *service) run(fileGetterFunc func() (string, error), afterCall func()) {
 	if svc.Running() {
 		println("Сервис уже запущен. Выходим")
 		return
@@ -171,6 +171,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	wg.Wait()
 	debug.FreeOSMemory()
+	afterCall()
 	// svc.writeResultMessage()
 	svc.redisConn.Close()
 	svc.SetRunning(false)
@@ -184,7 +185,7 @@ func (svc *service) runProcessWorker(paths <-chan string) {
 }
 
 func (svc *service) ProcessQueue() {
-	svc.run(svc.fileListQueue)
+	svc.run(svc.fileListQueue, func() {})
 }
 
 // Обрабатываем файл:
