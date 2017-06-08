@@ -23,6 +23,11 @@ import (
 	"sync"
 )
 
+type XmlContent struct {
+	DocType string `json:"docType"`
+	Content []byte `json:"content"`
+}
+
 var serviceURLMu sync.Mutex
 var verMap map[string]string
 var errEmptyVerString = errors.New("Не удалось найти строку с версией")
@@ -171,7 +176,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	wg.Wait()
 	debug.FreeOSMemory()
-	// svc.writeResultMessage()
+	svc.writeResultMessage()
 	svc.redisConn.Close()
 	svc.SetRunning(false)
 }
@@ -213,22 +218,27 @@ func (svc *service) ProcessFile(path string, c *client) {
 	}
 
 	buf := bytes.NewBuffer(xmlBts)
-	verStr, err := getVersionString(buf, docTypeFromPath(path))
+	verStr, err := GetVersionString(buf, DocTypeFromPath(path))
 	if err != nil {
 		fmt.Println("Error version string ", err.Error(), " ", path)
 		svc.storeFileProcessError(ErrorExportInfo, path, err)
 		return
 	}
 
-	ei, err := expinf.GetExportInfo(verStr) //string(xmlBts[0 : len(xmlBts)/3])
+	ei, err := expinf.GetExportInfoByTag(verStr) //string(xmlBts[0 : len(xmlBts)/3])
 	if err != nil {
 		svc.storeFileProcessError(ErrorExportInfo, path, err)
 		return
 	}
 
+	content := XmlContent{
+		DocType: ei.Title,
+		Content: xmlBts,
+	}
+
 	fmt.Printf("%+v\n", *ei)
 	url := svc.GetServiceURL(ei.Version)
-	err = c.SendData(url, xmlBts)
+	err = c.SendData(url, content)
 	xmlBts = nil
 
 	if err != nil {
@@ -328,7 +338,7 @@ func (svc *service) WsNotify() {
 }
 
 //ищет строку содержащую schemeVerString
-func getVersionString(buf *bytes.Buffer, docType string) (string, error) {
+func GetVersionString(buf *bytes.Buffer, docType string) (string, error) {
 	docTypeIndex := -1
 
 	for line, err := buf.ReadString('>'); ; line, err = buf.ReadString('>') {
@@ -354,7 +364,7 @@ func getVersionString(buf *bytes.Buffer, docType string) (string, error) {
 	}
 }
 
-func docTypeFromPath(path string) string {
+func DocTypeFromPath(path string) string {
 	startIndex := strings.LastIndex(path, "/") + 1
 	lastIndex := strings.Index(path[startIndex:], "_")
 	return path[startIndex : startIndex+lastIndex]

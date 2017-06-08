@@ -116,6 +116,7 @@ func (svc *service) getErrorsGetterFunc(searchCriteria bson.M) func() (string, e
 		return getFilePathsFromProcessErrors(res), nil
 	}
 }
+
 func getIDs(pes []ProcessError) []bson.ObjectId {
 	ids := make([]bson.ObjectId, len(pes))
 	for i, pe := range pes {

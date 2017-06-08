@@ -2,6 +2,7 @@ package queue_reader
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -19,13 +20,17 @@ func GetClient(timeOut time.Duration) *client {
 }
 
 // SendData отправляет массив байтов на сервис
-func (cli *client) SendData(url string, data []byte) error {
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(data))
+func (cli *client) SendData(url string, content XmlContent) error {
+	js, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(js))
 	if err != nil {
 		return err
 	}
 
-	// req.Header.Set("Content-Type", "application/xml")
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := cli.client.Do(req)
 	req.Body.Close()
 	if err != nil {
