@@ -28,6 +28,7 @@ type XmlContent struct {
 	Content []byte `json:"content"`
 }
 
+var wg sync.WaitGroup
 var serviceURLMu sync.Mutex
 var verMap map[string]string
 var errEmptyVerString = errors.New("Не удалось найти строку с версией")
@@ -124,9 +125,8 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	}
 
 	svc.SetRunning(true)
-	svc.WsNotify()
+	svc.WsNotify("endProcess", strconv.FormatInt(time.Now().Unix(), 10))
 
-	var wg sync.WaitGroup
 	wg.Add(svc.RoutineCount)
 
 	svc.done = make(chan bool, 1)
@@ -146,7 +146,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 				close(svc.flist)
 				return
 			default:
-				if i == 2 {
+				if i == svc.RoutineCount {
 					svc.Stop()
 				}
 				queueList, err := fileGetterFunc()
@@ -169,7 +169,6 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 			go func(routineNum int) {
 				svc.runProcessWorker(svc.flist)
 				println("Выходим из процесса #", routineNum)
-				wg.Done()
 			}(i)
 		}
 	}()
@@ -182,6 +181,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 }
 
 func (svc *service) runProcessWorker(paths <-chan string) {
+	defer wg.Done()
 	cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
 	for path := range paths {
 		svc.ProcessFile(path, cli)
@@ -203,8 +203,6 @@ func (svc *service) ProcessFile(path string, c *client) {
 	if path == "" {
 		return
 	}
-
-	println(path)
 
 	xmlBts, err := ioutil.ReadFile(path)
 	if len(xmlBts) > MaxFileSize {
@@ -236,7 +234,6 @@ func (svc *service) ProcessFile(path string, c *client) {
 		Content: xmlBts,
 	}
 
-	fmt.Printf("%+v\n", *ei)
 	url := svc.GetServiceURL(ei.Version)
 	err = c.SendData(url, content)
 	xmlBts = nil
@@ -311,7 +308,7 @@ func (svc *service) RunRedisSubscribe() {
 			svc.log().Infof("%v", n)
 			svc.ProcessQueue()
 		case redis.Subscription:
-			svc.log().Infof("Subscription: %s %s %d\n", n.Kind, n.Channel, n.Count)
+			// svc.log().Infof("Subscription: %s %s %d\n", n.Kind, n.Channel, n.Count)
 			if n.Count == 0 {
 				return
 			}
@@ -326,12 +323,12 @@ func (svc *service) RunRedisSubscribe() {
 func (svc *service) writeResultMessage() {
 	c := svc.redisPool.Get()
 	if _, err := c.Do("PUBLISH", "FTPBuilderResult", time.Now().Unix()); err != nil {
-		println("Error on sending result: %v\n", err)
+		svc.log().Errorf("Error on sending result: %v\n", err)
 	}
 }
 
-func (svc *service) WsNotify() {
-	_, err := svc.wsClient.Publish(svc.WSConfig.Channel, []byte(`{"system": "queue_reader", "time": "`+strconv.FormatInt(time.Now().Unix(), 10)+`"}`))
+func (svc *service) WsNotify(msgType string, message string) {
+	_, err := svc.wsClient.Publish(svc.WSConfig.Channel, []byte(`{"system": "queue_reader", "mt": "`+msgType+`", "message": "`+message+`"}`))
 	if err != nil {
 		println(err.Error())
 	}
@@ -348,7 +345,7 @@ func GetVersionString(buf *bytes.Buffer, docType string) (string, error) {
 
 		docTypeIndex = strings.Index(line, docType)
 		if docTypeIndex > 0 {
-			schemeVer := " " + schemeVerString + `="1.0"`
+			schemeVer := " " + schemeVerString + `="7.1"`
 			res := make([]byte, len(line)+len(schemeVer))
 			docTypeLastIndex := docTypeIndex + len(docType)
 
