@@ -112,8 +112,10 @@ func (svc *service) Stop() {
 	}
 
 	println("Остановка сервиса")
-	svc.done <- true
-	close(svc.done)
+	// for i := 0; i < svc.RoutineCount; i++ {
+	// 	svc.done <- true
+	// }
+	// close(svc.done)
 	svc.SetRunning(false)
 }
 
@@ -129,7 +131,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	wg.Add(svc.RoutineCount)
 
-	svc.done = make(chan bool, 1)
+	svc.done = make(chan bool, svc.RoutineCount)
 	svc.flist = make(chan string, svc.RoutineCount)
 	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0), redis.DialPassword(svc.RedisPassword))
 	if err != nil {
@@ -139,27 +141,16 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	svc.redisConn = rc
 
 	go func() {
-		i := 0
+		defer close(svc.flist)
 		for {
-			select {
-			case <-svc.done:
-				close(svc.flist)
+			queueList, err := fileGetterFunc()
+			if err != nil {
+				// svc.Stop()
 				return
-			default:
-				if i == svc.RoutineCount {
-					svc.Stop()
-				}
-				queueList, err := fileGetterFunc()
-				if err != nil {
-					svc.Stop()
-					continue
-				}
+			}
 
-				i++
-
-				for _, p := range strings.Split(queueList, ",") {
-					svc.flist <- p
-				}
+			for _, p := range strings.Split(queueList, ",") {
+				svc.flist <- p
 			}
 		}
 	}()
