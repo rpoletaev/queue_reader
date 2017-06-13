@@ -127,12 +127,11 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	}
 
 	svc.SetRunning(true)
-	svc.WsNotify("endProcess", strconv.FormatInt(time.Now().Unix(), 10))
 
 	wg.Add(svc.RoutineCount)
 
-	svc.done = make(chan bool, svc.RoutineCount)
-	svc.flist = make(chan string, svc.RoutineCount)
+	// svc.done = make(chan bool, svc.RoutineCount)
+	svc.flist = make(chan string, 1)
 	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0), redis.DialPassword(svc.RedisPassword))
 	if err != nil {
 		panic(err)
@@ -140,43 +139,49 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	svc.redisConn = rc
 
+	//читаем из очереди списки путей, разделенных запятыми, разбиваем на отдельные пути и шлем в канал обработки файлов,
+	//при выходе закрываем канал обработки
 	go func() {
 		defer close(svc.flist)
-		for {
-			queueList, err := fileGetterFunc()
+		for queueList, err := fileGetterFunc(); ; queueList, err = fileGetterFunc() {
 			if err != nil {
-				// svc.Stop()
+				println(err.Error())
 				return
 			}
-
-			for _, p := range strings.Split(queueList, ",") {
+			paths := strings.Split(queueList, ",")
+			for _, p := range paths {
 				svc.flist <- p
 			}
+			time.Sleep(2 * time.Second)
 		}
 	}()
 
-	go func() {
-		for i := 0; i < svc.RoutineCount; i++ {
-			go func(routineNum int) {
-				svc.runProcessWorker(svc.flist)
+	//Запустим routineNum процессов читающих из svc.flist и обрабатывающих прочитанные файлы
+	for i := 0; i < svc.RoutineCount; i++ {
+		go func(routineNum int) {
+			defer func() {
 				println("Выходим из процесса #", routineNum)
-			}(i)
-		}
-	}()
+				wg.Done()
+			}()
 
+			cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
+			for path := range svc.flist {
+				svc.ProcessFile(path, cli)
+			}
+		}(i)
+	}
+
+	// ждем окончания обработки всех переданных файлов
 	wg.Wait()
 	debug.FreeOSMemory()
+
+	// отправим сообщение об окончании на веб-морду
+	svc.WsNotify("endProcess", strconv.FormatInt(time.Now().Unix(), 10))
+
+	//отправим сообщение об окончании в очередь загрузки
 	svc.writeResultMessage()
 	svc.redisConn.Close()
 	svc.SetRunning(false)
-}
-
-func (svc *service) runProcessWorker(paths <-chan string) {
-	defer wg.Done()
-	cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
-	for path := range paths {
-		svc.ProcessFile(path, cli)
-	}
 }
 
 func (svc *service) ProcessQueue() {
