@@ -92,7 +92,7 @@ func GetService(cnf *Config) (*service, error) {
 		return err
 	})
 
-	go svc.RunRedisSubscribe()
+	go svc.runRedisSubscribe()
 	svc.wsClient = gocent.NewClient("http://"+svc.WSConfig.Host+":"+svc.WSConfig.Port, svc.WSConfig.Secret, 5*time.Second)
 	return svc, nil
 }
@@ -279,7 +279,7 @@ func (svc service) GetServiceURL(version string) string {
 	return url
 }
 
-func (svc *service) RunRedisSubscribe() {
+func (svc *service) runRedisSubscribe() {
 	time.Sleep(30 * time.Second)
 	c := svc.redisPool.Get()
 
@@ -330,7 +330,7 @@ func (svc *service) WsNotify(msgType string, message string) {
 	}
 }
 
-//ищет строку содержащую schemeVerString
+// GetVersionString ищет строку содержащую schemeVerString
 func GetVersionString(buf *bytes.Buffer, docType string) (string, error) {
 	docTypeIndex := -1
 
@@ -357,8 +357,21 @@ func GetVersionString(buf *bytes.Buffer, docType string) (string, error) {
 	}
 }
 
+// DocTypeFromPath получает тип документа из пути к файлу
 func DocTypeFromPath(path string) string {
 	startIndex := strings.LastIndex(path, "/") + 1
 	lastIndex := strings.Index(path[startIndex:], "_")
-	return path[startIndex : startIndex+lastIndex]
+	nameFromPath := path[startIndex : startIndex+lastIndex]
+	if nameFromPath == "fcs" {
+		prevLastIndex := startIndex + lastIndex
+		lastIndex = strings.Index(path[prevLastIndex+1:], "_")
+		nameFromPath = path[startIndex : prevLastIndex+lastIndex+1]
+	}
+
+	switch nameFromPath {
+	case "fcsRegulationRulesInvalid":
+		return "fcsRegulationRules"
+	default:
+		return nameFromPath
+	}
 }
