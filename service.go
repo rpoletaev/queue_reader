@@ -120,7 +120,7 @@ func (svc *service) Stop() {
 }
 
 // запустить обработку файлов из очереди загрузки
-func (svc *service) run(fileGetterFunc func() (string, error)) {
+func (svc *service) run(fileGetterFunc func() (string, error), endCallBack func()) {
 	if svc.Running() {
 		println("Сервис уже запущен. Выходим")
 		return
@@ -131,11 +131,12 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 	wg.Add(svc.RoutineCount)
 
 	// svc.done = make(chan bool, svc.RoutineCount)
-	svc.flist = make(chan string, 1)
+	svc.flist = make(chan string, svc.RoutineCount)
 	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0), redis.DialPassword(svc.RedisPassword))
 	if err != nil {
 		panic(err)
 	}
+	defer svc.redisConn.Close()
 
 	svc.redisConn = rc
 
@@ -152,7 +153,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 			for _, p := range paths {
 				svc.flist <- p
 			}
-			time.Sleep(2 * time.Second)
+			time.Sleep(1 * time.Second)
 		}
 	}()
 
@@ -177,15 +178,18 @@ func (svc *service) run(fileGetterFunc func() (string, error)) {
 
 	// отправим сообщение об окончании на веб-морду
 	svc.WsNotify("endProcess", strconv.FormatInt(time.Now().Unix(), 10))
+	if endCallBack != nil {
+		endCallBack()
+	}
 
-	//отправим сообщение об окончании в очередь загрузки
-	svc.writeResultMessage()
-	svc.redisConn.Close()
 	svc.SetRunning(false)
 }
 
 func (svc *service) ProcessQueue() {
-	svc.run(svc.fileListQueue)
+	svc.run(svc.fileListQueue, func() {
+		//отправим сообщение об окончании в очередь загрузки
+		svc.writeResultMessage()
+	})
 }
 
 // Обрабатываем файл:

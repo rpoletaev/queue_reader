@@ -19,7 +19,7 @@ func (svc *service) GetErrors(w http.ResponseWriter, r *http.Request) {
 	errors := make([]ProcessError, 10)
 	var criteria bson.M
 	url := r.URL.Query()
-	et, err := strconv.ParseUint(url.Get("error_type"), 10, 32)
+	et, err := strconv.Atoi(url.Get("error_type"))
 	if err == nil {
 		criteria = bson.M{"error_type": et}
 	}
@@ -86,7 +86,7 @@ func (svc *service) GetErrDoc(w http.ResponseWriter, r *http.Request) {
 func (svc *service) ProcessErrorsHandler(w http.ResponseWriter, r *http.Request) {
 	searchCriteria := getErrSerchCriteriaFromURL(r.URL.Query())
 	errorsGetter := svc.getErrorsGetterFunc(searchCriteria)
-	go svc.run(errorsGetter)
+	go svc.run(errorsGetter, nil)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -151,7 +151,7 @@ func getErrSerchCriteriaFromURL(pars url.Values) bson.M {
 	// startIdx := strings.LastIndex(fPath, "/")
 	// endIdx := strings.Index(fPath[startIdx:], "_")
 
-	et, _ := strconv.ParseInt(pars.Get("error_type"), 10, 32)
+	et, _ := strconv.Atoi(pars.Get("error_type"))
 	// if err != nil {
 	// 	return bson.M{
 	// 		"file_path": "/" + fPath[startIdx:endIdx] + "/",
