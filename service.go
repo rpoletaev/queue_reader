@@ -120,7 +120,7 @@ func (svc *service) Stop() {
 }
 
 // запустить обработку файлов из очереди загрузки
-func (svc *service) run(fileGetterFunc func() (string, error), endCallBack func()) {
+func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack func()
 	if svc.Running() {
 		println("Сервис уже запущен. Выходим")
 		return
@@ -136,10 +136,9 @@ func (svc *service) run(fileGetterFunc func() (string, error), endCallBack func(
 	if err != nil {
 		panic(err)
 	}
-	defer svc.redisConn.Close()
 
 	svc.redisConn = rc
-
+	defer svc.redisConn.Close()
 	//читаем из очереди списки путей, разделенных запятыми, разбиваем на отдельные пути и шлем в канал обработки файлов,
 	//при выходе закрываем канал обработки
 	go func() {
@@ -178,18 +177,20 @@ func (svc *service) run(fileGetterFunc func() (string, error), endCallBack func(
 
 	// отправим сообщение об окончании на веб-морду
 	svc.WsNotify("endProcess", strconv.FormatInt(time.Now().Unix(), 10))
-	if endCallBack != nil {
-		endCallBack()
-	}
-
+	// if endCallBack != nil {
+	// 	endCallBack()
+	// }
+	svc.writeResultMessage()
 	svc.SetRunning(false)
 }
 
 func (svc *service) ProcessQueue() {
-	svc.run(svc.fileListQueue, func() {
-		//отправим сообщение об окончании в очередь загрузки
-		svc.writeResultMessage()
-	})
+	svc.run(svc.fileListQueue)
+	// , func() {
+	// 	//отправим сообщение об окончании в очередь загрузки
+
+	// 	svc.writeResultMessage()
+	// })
 }
 
 // Обрабатываем файл:

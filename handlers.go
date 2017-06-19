@@ -86,7 +86,7 @@ func (svc *service) GetErrDoc(w http.ResponseWriter, r *http.Request) {
 func (svc *service) ProcessErrorsHandler(w http.ResponseWriter, r *http.Request) {
 	searchCriteria := getErrSerchCriteriaFromURL(r.URL.Query())
 	errorsGetter := svc.getErrorsGetterFunc(searchCriteria)
-	go svc.run(errorsGetter, nil)
+	go svc.run(errorsGetter)
 
 	w.WriteHeader(http.StatusOK)
 }
