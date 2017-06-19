@@ -152,7 +152,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 			for _, p := range paths {
 				svc.flist <- p
 			}
-			time.Sleep(1 * time.Second)
+			// time.Sleep(1 * time.Second)
 		}
 	}()
 
@@ -251,8 +251,12 @@ func (svc *service) ProcessFile(path string, c *client) {
 	}
 }
 
+var rMu sync.Mutex
+
 // Получаем путь к файлу из очереди сервиса загрузки
 func (svc *service) fileListQueue() (string, error) {
+	rMu.Lock()
+	defer rMu.Unlock()
 	return redis.String(svc.redisConn.Do("SPOP", "FileQueue"))
 }
 
