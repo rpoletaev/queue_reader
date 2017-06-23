@@ -125,7 +125,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 		println("Сервис уже запущен. Выходим")
 		return
 	}
-
+	find := make(map[string]int)
 	svc.SetRunning(true)
 
 	wg.Add(svc.RoutineCount)
@@ -142,17 +142,22 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 	//читаем из очереди списки путей, разделенных запятыми, разбиваем на отдельные пути и шлем в канал обработки файлов,
 	//при выходе закрываем канал обработки
 	go func() {
-		defer close(svc.flist)
+		defer func() {
+			close(svc.flist)
+			for k, v := range find {
+				fmt.Printf("%s %d\n", k, v)
+			}
+		}()
 		for queueList, err := fileGetterFunc(); ; queueList, err = fileGetterFunc() {
 			if err != nil {
 				println(err.Error())
 				return
 			}
+			find[queueList]++
 			paths := strings.Split(queueList, ",")
 			for _, p := range paths {
 				svc.flist <- p
 			}
-			// time.Sleep(1 * time.Second)
 		}
 	}()
 
@@ -235,7 +240,7 @@ func (svc *service) ProcessFile(path string, c *client) {
 		Content: xmlBts,
 	}
 
-	url := svc.GetServiceURL(ei.Version)
+	url := svc.GetServiceURL(linkTemplate, ei.Version)
 	err = c.SendData(url, content)
 	xmlBts = nil
 
@@ -261,7 +266,7 @@ func (svc *service) fileListQueue() (string, error) {
 }
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
-func (svc service) GetServiceURL(version string) string {
+func (svc service) GetServiceURL(template, version string) string {
 	serviceURLMu.Lock()
 	defer serviceURLMu.Unlock()
 
@@ -281,7 +286,7 @@ func (svc service) GetServiceURL(version string) string {
 		}
 	}
 
-	url := fmt.Sprintf(linkTemplate, svc.ServicePreffix, verMap[version], svc.ServicePort)
+	url := fmt.Sprintf(template, svc.ServicePreffix, verMap[version], svc.ServicePort)
 	if svc.NeedLogingURL {
 		svc.log().Info(url)
 	}

@@ -9,10 +9,11 @@ import (
 	"net/url"
 	"strconv"
 
+	"fmt"
+	expinf "github.com/rpoletaev/exportinfo"
 	mgo "gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
-	// "strings"
-	"fmt"
+	"time"
 )
 
 func (svc *service) GetErrors(w http.ResponseWriter, r *http.Request) {
@@ -147,20 +148,52 @@ func getFilePathsFromProcessErrors(pes []ProcessError) string {
 }
 
 func getErrSerchCriteriaFromURL(pars url.Values) bson.M {
-	// fPath := pars.Get("file_name")
-	// startIdx := strings.LastIndex(fPath, "/")
-	// endIdx := strings.Index(fPath[startIdx:], "_")
-
 	et, _ := strconv.Atoi(pars.Get("error_type"))
-	// if err != nil {
-	// 	return bson.M{
-	// 		"file_path": "/" + fPath[startIdx:endIdx] + "/",
-	// 	}
-	// }
 
-	// return bson.M{
-	// 	"error_type": et,
-	// 	"file_path":  "/" + fPath[startIdx:endIdx] + "/",
-	// }
 	return bson.M{"error_type": et}
+}
+
+const linkJSONTemplate = "http://%s%s:%s/get_json"
+
+func (svc *service) ProcessUserDocument(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(32 << 10)
+	file, handler, err := r.FormFile("uploadfile")
+	if err != nil {
+		http.Error(w, "Не удалось прочесть файл", http.StatusBadRequest)
+		return
+	}
+
+	defer file.Close()
+	//fmt.Fprintf(w, "%v", handler.Header)
+
+	cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
+	xmlBts, err := ioutil.ReadAll(file)
+	buf := bytes.NewBuffer(xmlBts)
+	verStr, err := GetVersionString(buf, DocTypeFromPath(handler.Filename))
+	if err != nil {
+		fmt.Fprintf(w, "Error version string %v %s", err.Error(), handler.Filename)
+		return
+	}
+
+	ei, err := expinf.GetExportInfoByTag(verStr) //string(xmlBts[0 : len(xmlBts)/3])
+	fmt.Fprintf(w, "%v\n", *ei)
+	if err != nil {
+		http.Error(w, "Не удалось получить информацию о файле", http.StatusBadRequest)
+		return
+	}
+
+	content := XmlContent{
+		DocType: ei.Title,
+		Content: xmlBts,
+	}
+
+	url := svc.GetServiceURL(linkJSONTemplate, ei.Version)
+	json, err := cli.XmlToJSON(url, content)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(json)
 }
