@@ -53,7 +53,7 @@ func main() {
 
 	http.HandleFunc("/get_errors", svc.GetErrors)
 	http.HandleFunc("/showDocument", svc.GetErrDoc)
-
+	http.HandleFunc("/process_document", svc.ProcessUserDocument)
 	http.HandleFunc("/process_errors", svc.ProcessErrorsHandler)
 
 	// http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
