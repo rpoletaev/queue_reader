@@ -9,17 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+	"errors"
 	log "github.com/Sirupsen/logrus"
 	"github.com/centrifugal/gocent"
 	"github.com/garyburd/redigo/redis"
+	"github.com/jinzhu/gorm"
 	expinf "github.com/rpoletaev/exportinfo"
 	"github.com/weekface/mgorus"
+	"gitlab.com/garanteka/goszakupki/ftpworker"
 	mgo "gopkg.in/mgo.v2"
-	//"path/filepath"
-	// "bufio"
-	"bytes"
-	"errors"
-	//"io"
 	"sync"
 )
 
@@ -50,6 +49,7 @@ type service struct {
 	redisPool *redis.Pool
 	redisConn redis.Conn
 	mongo     *mgo.Session
+	mysql     *gorm.DB
 	wsClient  *gocent.Client
 	runningMu sync.RWMutex
 	running   bool
@@ -84,15 +84,9 @@ func GetService(cnf *Config) (*service, error) {
 	svc.Hooks.Add(logHook)
 	log.SetLevel(log.ErrorLevel)
 
-	svc.redisPool = newRedisPool(cnf.RedisAddress, cnf.RedisPassword)
-
 	svc.setupMongo()
-	svc.mongoExec("processedFiles", func(c *mgo.Collection) error {
-		_, err := c.RemoveAll(nil)
-		return err
-	})
-
-	go svc.runRedisSubscribe()
+	svc.setupMysql()
+	svc.setupRedis()
 	svc.wsClient = gocent.NewClient("http://"+svc.WSConfig.Host+":"+svc.WSConfig.Port, svc.WSConfig.Secret, 5*time.Second)
 	return svc, nil
 }
@@ -120,7 +114,7 @@ func (svc *service) Stop() {
 }
 
 // запустить обработку файлов из очереди загрузки
-func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack func()
+func (svc *service) run(fileGetterFunc func() ([]ftpworker.ArchFile, error)) { //, endCallBack func()
 	if svc.Running() {
 		println("Сервис уже запущен. Выходим")
 		return
@@ -130,15 +124,17 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 
 	wg.Add(svc.RoutineCount)
 
-	// svc.done = make(chan bool, svc.RoutineCount)
-	svc.flist = make(chan string, svc.RoutineCount)
-	rc, err := redis.Dial("tcp", svc.RedisAddress, redis.DialDatabase(0), redis.DialPassword(svc.RedisPassword))
+	//svc.flist = make(chan string, svc.RoutineCount)
+	// svc.redisConn = svc.redisPool.Get()
+	// defer svc.redisConn.Close()
+	files, err := fileGetterFunc()
+
 	if err != nil {
-		panic(err)
+		svc.log().Error(err)
+		return
 	}
 
-	svc.redisConn = rc
-	defer svc.redisConn.Close()
+	flist := make(chan ftpworker.ArchFile, len(files))
 	//читаем из очереди списки путей, разделенных запятыми, разбиваем на отдельные пути и шлем в канал обработки файлов,
 	//при выходе закрываем канал обработки
 	go func() {
@@ -148,18 +144,23 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 				fmt.Printf("%s %d\n", k, v)
 			}
 		}()
-		for queueList, err := fileGetterFunc(); ; queueList, err = fileGetterFunc() {
-			if err != nil {
-				println(err.Error())
-				return
-			}
-			find[queueList]++
-			paths := strings.Split(queueList, ",")
-			for _, p := range paths {
-				svc.flist <- p
-			}
+
+		for _, file := range files {
+			// if err != nil {
+			// 	println(err.Error())
+			// 	return
+			// }
+			find[file.File]++
+			// paths := strings.Split(queueList, ",")
+			// for _, p := range paths {
+			flist <- file
+			// }
 		}
+		close(flist)
 	}()
+
+	batchChan := make(chan ftpworker.ArchFile, svc.RoutineCount)
+	go batch(svc.mysql, batchChan)
 
 	//Запустим routineNum процессов читающих из svc.flist и обрабатывающих прочитанные файлы
 	for i := 0; i < svc.RoutineCount; i++ {
@@ -170,14 +171,15 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 			}()
 
 			cli := GetClient(time.Duration(svc.ClientTimeOut) * time.Second)
-			for path := range svc.flist {
-				svc.ProcessFile(path, cli)
+			for f := range flist {
+				svc.ProcessFile(f, cli, batchChan)
 			}
 		}(i)
 	}
 
 	// ждем окончания обработки всех переданных файлов
 	wg.Wait()
+	close(batchChan)
 	debug.FreeOSMemory()
 
 	// отправим сообщение об окончании на веб-морду
@@ -190,7 +192,7 @@ func (svc *service) run(fileGetterFunc func() (string, error)) { //, endCallBack
 }
 
 func (svc *service) ProcessQueue() {
-	svc.run(svc.fileListQueue)
+	svc.run(svc.mysqlListQueue)
 	// , func() {
 	// 	//отправим сообщение об окончании в очередь загрузки
 
@@ -205,33 +207,34 @@ func (svc *service) ProcessQueue() {
 // указывая  тип ошибки, соответствующий этапу обработки. После чего выходим из функции.
 // Если ни на одном из этапов обработки ошибок не возникло, то пытаемся удалить файл с диска.
 // В случае неудачи так же запишем сообщение в очередь ошибок с типом ErrorRemove
-func (svc *service) ProcessFile(path string, c *client) {
-	if path == "" {
+func (svc *service) ProcessFile(file ftpworker.ArchFile, c *client, batchChannel chan ftpworker.ArchFile) {
+
+	if file.File == "" {
 		return
 	}
 
-	xmlBts, err := ioutil.ReadFile(path)
+	xmlBts, err := ioutil.ReadFile(file.File)
 	if len(xmlBts) > MaxFileSize {
-		svc.storeFileProcessError(ErrorBigFileSize, path, fmt.Errorf("Размер файла: %d", len(xmlBts)))
+		svc.storeFileProcessError(ErrorBigFileSize, file.File, fmt.Errorf("Размер файла: %d", len(xmlBts)))
 	}
 
 	if err != nil {
-		svc.storeFileProcessError(ErrorReadFile, path, err)
+		svc.storeFileProcessError(ErrorReadFile, file.File, err)
 		fmt.Printf("Не удалось прочесть файл: %v\n", err)
 		return
 	}
 
 	buf := bytes.NewBuffer(xmlBts)
-	verStr, err := GetVersionString(buf, DocTypeFromPath(path))
+	verStr, err := GetVersionString(buf, DocTypeFromPath(file.File))
 	if err != nil {
-		fmt.Println("Error version string ", err.Error(), " ", path)
-		svc.storeFileProcessError(ErrorExportInfo, path, err)
+		fmt.Println("Error version string ", err.Error(), " ", file.File)
+		svc.storeFileProcessError(ErrorExportInfo, file.File, err)
 		return
 	}
 
 	ei, err := expinf.GetExportInfoByTag(verStr) //string(xmlBts[0 : len(xmlBts)/3])
 	if err != nil {
-		svc.storeFileProcessError(ErrorExportInfo, path, err)
+		svc.storeFileProcessError(ErrorExportInfo, file.File, err)
 		return
 	}
 
@@ -245,24 +248,33 @@ func (svc *service) ProcessFile(path string, c *client) {
 	xmlBts = nil
 
 	if err != nil {
-		sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, path, err)
-		svc.storeFileProcessError(ErrorSend, path, sendErr)
+		sendErr := fmt.Errorf(errDataSendTemplate, ei.Title, ei.Version, file.File, err)
+		svc.storeFileProcessError(ErrorSend, file.File, sendErr)
 		return
 	}
 
-	if err := os.Remove(path); err != nil {
-		svc.storeFileProcessError(ErrorRemove, path, err)
+	if err := os.Remove(file.File); err != nil {
+		svc.storeFileProcessError(ErrorRemove, file.File, err)
 		return
 	}
+
+	batchChannel <- file
 }
 
 var rMu sync.Mutex
 
-// Получаем путь к файлу из очереди сервиса загрузки
-func (svc *service) fileListQueue() (string, error) {
+// Получаем путь к файлу из очереди сервиса загрузки в redis
+func (svc *service) redisListQueue() (string, error) {
 	rMu.Lock()
 	defer rMu.Unlock()
 	return redis.String(svc.redisConn.Do("SPOP", "FileQueue"))
+}
+
+// Получаем путь к файлу из очереди сервиса загрузки в mysql
+func (svc *service) mysqlListQueue() ([]ftpworker.ArchFile, error) {
+	var archFiles []ftpworker.ArchFile
+	err := svc.mysql.Raw("SELECT * FROM arch_files WHERE downloaded=0").Scan(&archFiles).Error
+	return archFiles, err
 }
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
@@ -388,4 +400,36 @@ func DocTypeFromPath(path string) string {
 	default:
 		return nameFromPath
 	}
+}
+
+func (svc *service) setupMysql() {
+	b, err := gorm.Open("mysql", svc.MysqlConString)
+	if err != nil {
+		panic(err)
+	}
+
+	svc.mysql = b
+}
+
+func (svc *service) setupRedis() {
+	svc.redisPool = newRedisPool(svc.Config.RedisAddress, svc.Config.RedisPassword)
+	go svc.runRedisSubscribe()
+}
+
+func batch(db *gorm.DB, bc <-chan ftpworker.ArchFile) {
+	buf := bytes.NewBufferString("UPDATE arch_files SET downloaded=1 WHERE id in ( ")
+	var ids []string
+	for f := range bc {
+		ids = append(ids, strconv.Itoa(int(f.ID)))
+	}
+
+	buf.WriteString(strings.Join(ids, ","))
+	buf.WriteString(")")
+
+	q := buf.String()
+	err := db.Exec(q).Error
+	if err != nil {
+		panic(err)
+	}
+
 }

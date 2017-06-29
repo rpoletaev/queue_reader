@@ -84,13 +84,13 @@ func (svc *service) GetErrDoc(w http.ResponseWriter, r *http.Request) {
 	w.Write(js)
 }
 
-func (svc *service) ProcessErrorsHandler(w http.ResponseWriter, r *http.Request) {
-	searchCriteria := getErrSerchCriteriaFromURL(r.URL.Query())
-	errorsGetter := svc.getErrorsGetterFunc(searchCriteria)
-	go svc.run(errorsGetter)
+// func (svc *service) ProcessErrorsHandler(w http.ResponseWriter, r *http.Request) {
+// 	searchCriteria := getErrSerchCriteriaFromURL(r.URL.Query())
+// 	errorsGetter := svc.getErrorsGetterFunc(searchCriteria)
+// 	go svc.run(errorsGetter)
 
-	w.WriteHeader(http.StatusOK)
-}
+// 	w.WriteHeader(http.StatusOK)
+// }
 
 func (svc *service) getErrorsGetterFunc(searchCriteria bson.M) func() (string, error) {
 	return func() (string, error) {

@@ -3,7 +3,6 @@ package queue_reader
 // Config описывает структуру конфигурации сервиса
 type Config struct {
 	LogHook         *MongoLogHookConfig `yaml:"log_hook"`
-	MySQL           string              `yaml:"mysql"`
 	XMLMirror       string              `yaml:"xml_mirror"`
 	Port            string              `yaml:"port"`
 	Mongo           string              `yaml:"mongo"`
@@ -12,6 +11,7 @@ type Config struct {
 	RedisAddress    string              `yaml:"redis_address"`
 	RedisPassword   string              `yaml:"redis_password"`
 	RoutineCount    int                 `yaml:"routine_count"`
+	MysqlConString  string              `yaml:"mysql_con_string"`
 	ServicePreffix  string              `yaml:"service_preffix"`
 	ServicePort     string              `yaml:"service_port"`
 	NeedLogingURL   bool                `yaml:"loging_url"`
