@@ -11,6 +11,8 @@ import (
 
 	"bytes"
 	"errors"
+	"sync"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/centrifugal/gocent"
 	"github.com/garyburd/redigo/redis"
@@ -19,7 +21,6 @@ import (
 	"github.com/weekface/mgorus"
 	"gitlab.com/garanteka/goszakupki/ftpworker"
 	mgo "gopkg.in/mgo.v2"
-	"sync"
 )
 
 type XmlContent struct {
@@ -84,9 +85,8 @@ func GetService(cnf *Config) (*service, error) {
 	svc.Hooks.Add(logHook)
 	log.SetLevel(log.ErrorLevel)
 
-	svc.setupMongo()
-	svc.setupMysql()
-	svc.setupRedis()
+	go svc.setupMongo()
+	go svc.setupRedis()
 	svc.wsClient = gocent.NewClient("http://"+svc.WSConfig.Host+":"+svc.WSConfig.Port, svc.WSConfig.Secret, 5*time.Second)
 	return svc, nil
 }
@@ -119,7 +119,7 @@ func (svc *service) run(fileGetterFunc func() ([]ftpworker.ArchFile, error)) { /
 		println("Сервис уже запущен. Выходим")
 		return
 	}
-	find := make(map[string]int)
+	svc.setupMysql()
 	svc.SetRunning(true)
 
 	wg.Add(svc.RoutineCount)
@@ -139,10 +139,12 @@ func (svc *service) run(fileGetterFunc func() ([]ftpworker.ArchFile, error)) { /
 	//при выходе закрываем канал обработки
 	go func() {
 		defer func() {
-			close(svc.flist)
-			for k, v := range find {
-				fmt.Printf("%s %d\n", k, v)
-			}
+			close(flist)
+			// for k, v := range find {
+			// 	if v > 1 {
+			// 		fmt.Printf("%s %d\n", k, v)
+			// 	}
+			// }
 		}()
 
 		for _, file := range files {
@@ -150,13 +152,12 @@ func (svc *service) run(fileGetterFunc func() ([]ftpworker.ArchFile, error)) { /
 			// 	println(err.Error())
 			// 	return
 			// }
-			find[file.File]++
+			// find[file.File]++
 			// paths := strings.Split(queueList, ",")
 			// for _, p := range paths {
 			flist <- file
 			// }
 		}
-		close(flist)
 	}()
 
 	batchChan := make(chan ftpworker.ArchFile, svc.RoutineCount)
@@ -278,7 +279,7 @@ func (svc *service) mysqlListQueue() ([]ftpworker.ArchFile, error) {
 }
 
 // GetServiceURL принимает версию данных и формирует url для сервиса
-func (svc service) GetServiceURL(template, version string) string {
+func (svc *service) GetServiceURL(template, version string) string {
 	serviceURLMu.Lock()
 	defer serviceURLMu.Unlock()
 
@@ -417,6 +418,7 @@ func (svc *service) setupRedis() {
 }
 
 func batch(db *gorm.DB, bc <-chan ftpworker.ArchFile) {
+	defer db.Close()
 	buf := bytes.NewBufferString("UPDATE arch_files SET downloaded=1 WHERE id in ( ")
 	var ids []string
 	for f := range bc {
